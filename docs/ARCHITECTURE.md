@@ -138,12 +138,10 @@ any exception named in `docs/porting-notes.md`.
 
 ## Open decisions
 
-1. **Timestamp epoch.** The commit timestamp is a `U64` in seconds and the
-   format leaves its epoch undecided; the fixtures hold TempleOS-clock values.
-   If the native tool wrote Unix seconds, history order would break across
-   implementations. Plan: treat it as an opaque number and settle the epoch in
-   an ADR before the native tool writes any commit. This is the one open item
-   that can affect the format.
+1. **Timestamp epoch.** Decided: native writers store Unix milliseconds; values
+   below `1_000_000_000_000` are TempleOS uptime ticks and are shown as ticks,
+   never as dates. No format change. See
+   [ADR N-0001](adr/N-0001-timestamp-epoch.md).
 2. **View parity.** Only the information in the DolDoc views is ported, not
    their rendering, unless a stronger requirement appears.
 3. **Native file handling.** Line endings and permissions when `offer` reads

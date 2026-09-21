@@ -10,6 +10,8 @@ then the port itself.
 - `contract/` submodule pinned to `contract-1.8.9` of the TempleOS hgit: format
   spec, ADRs and research, the HolyC source, and 23 golden-fixture files
   (repos and expected output produced on real TempleOS).
+- Timestamp epoch decided: [ADR N-0001](adr/N-0001-timestamp-epoch.md) (Unix ms;
+  values below 1e12 are TempleOS ticks); `pkg/hgit/clock`.
 - Design written: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Port progress
@@ -28,8 +30,5 @@ Layers and gates are defined in [`ARCHITECTURE.md`](ARCHITECTURE.md#order).
 
 ## Open
 
-- **Timestamp epoch.** The commit timestamp is a `U64` of seconds with an
-  undecided epoch; to be settled in an ADR before the native tool writes any
-  commit. See [`ARCHITECTURE.md`](ARCHITECTURE.md#open-decisions).
 - Pillar C (reverse interop: TempleOS reads native-written repos) needs a
   QEMU-based script that does not exist yet.

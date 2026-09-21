@@ -4,6 +4,82 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-22: init, working-directory listing and the flat offer (task 11b)
+
+Ports `Init.HC` and `Offer.HC`'s flat path (`HgitOffer`,
+`HgitOfferWithRelation`, `OfferFindFuzzyRename`) plus the `find_mask`
+enumeration from `WorkDir.HC`. The recursive `offertree` path is not ported
+yet; `offer.CarryEntityID`/`offer.FindFuzzyRename` are shared helpers it can
+reuse per directory level.
+
+- **Byte-exact blob parity achieved.** The regression's
+  `FileWrite(name, <95-char literal>, 97)` stores 97 bytes: the literal, its
+  terminating NUL and one byte past it, which the fixture's own blob records
+  show is `'C'`. Replaying the first two offers with those exact bytes
+  reproduces every blob hash in `TFullRepo.hgs` (`tests/offer_scenario_test.go`).
+  The NUL makes that file binary, which is why both fixture commits carry a
+  one-entry `OBJ_ATTRS` object - reproduced too.
+- **Fuzzy-rename ceiling (deviation, deliberate).** `MaxFuzzyRenameBytes = 512`
+  keeps files over 512 bytes out of fuzzy (edited-during-rename) detection, on
+  either side of the comparison. This mirrors `Status.HC`'s fixed 512-byte
+  candidate slots, but `Offer.HC`'s own flat path has **no** such ceiling: probe
+  106 lifted every per-file cap there and passes the whole file to
+  `OfferFindFuzzyRename`. So this is stricter than the offer HolyC, taken for
+  parity with status and to bound an O(n*m*min(n,m)) scan; raising it is a
+  one-line change with no format consequence. Exact-name and exact-content
+  identity are unaffected at any size.
+- **Tree entry order.** `Offer.HC` never sorts: entries land in `FilesFind`
+  order. The fixture's trees are in lexicographic order by name, which is also
+  what `os.ReadDir` returns, so `workdir.List` sorts by name and the entry
+  order matches what TempleOS wrote.
+- **`find_mask`.** Implemented as `workdir.Match`: only `*` (any run) and `?`
+  (exactly one byte) are special, matched against the file name alone, case
+  sensitive. `workdir.List` skips subdirectories; the HolyC's flat loop does
+  not check `attr & 16` and would `FileRead` a directory entry, which no real
+  mask exercises.
+- **Object deduplication (pre-existing, visible here first).** `ObjectPut`
+  appends unconditionally, so TempleOS stores a fresh copy of every unchanged
+  file's blob on every offer - `TFullRepo.hgs` holds `never touched` three
+  times and reports `objects=14` after two offers. `repo.Put` stores one copy
+  per hash, so a natively produced repo has fewer records and a lower object
+  count for the same history. Content and hashes are identical; only the record
+  count differs. The later CLI task cannot expect `expected.log`'s
+  `CHECK_OK objects=N` numbers from a natively built repo.
+- **Removed HolyC buffer limits.** No `tree_content[2048]` entry cap (so
+  `OFFER_SKIP tree_full` can never fire), no `ARCHIVE_SANITY_MAX` or computed
+  archive capacity (so `OFFER_REFUSED archive_absurdly_large` can never fire),
+  and no per-file size cap - confirmed absent from the current `Offer.HC` too,
+  none was invented.
+- **Length refusals instead of overflow.** The HolyC builds its commit in a
+  512-byte stack buffer; a long message would overflow it. `Offer` refuses a
+  message over 255 bytes (`ErrMessageTooLong`) and a name over 255 bytes
+  (`ErrNameTooLong`, what a tree entry's U8 `name_len` can encode - unreachable
+  on Linux, whose own `NAME_MAX` is 255). Nothing is ever truncated.
+- **Nothing to offer is not an error.** An empty mask match records a commit
+  with an empty tree, exactly as the HolyC does.
+- **`Init`** uses `O_CREATE|O_EXCL` rather than `HgitInit`'s read-then-write
+  check; same refusal, no race. It writes only the 16-byte header at format
+  version 4 - the `.m` metadata file is created lazily by the first `Save`.
+- **Entity ids** come from `crypto/rand` (`Tree.HC` uses two `RandU32`), never
+  0, and `offer.NewEntityID` is replaceable for tests. If the system random
+  source fails the offer is refused (`ErrEntityID`) rather than using a weak id.
+- **Redo log.** `OpLogAppend` clears the current path's redo log; the port
+  does the same, by draining `meta.TagRedoLog` records for that path.
+
+Tokens the HolyC prints, and what the Go returns instead (`pkg/hgit/...` never
+prints; the CLI task maps these back):
+
+| HolyC output | Go |
+| --- | --- |
+| `DISPATCH_ERR init_failed <path>` | `repo.ErrExists` (or the OS error) from `repo.Init` |
+| `DISPATCH_OK offer` | `Offer` returns the commit hash and a nil error |
+| `OFFER_IGNORED <name>` | `Options.OnIgnored(name)` callback, one call per hidden file |
+| `OFFER_SKIP tree_full <name>` | not reachable: no entry-count cap |
+| `OFFER_REFUSED archive_absurdly_large size=<n>` | not reachable: no capacity accounting |
+| (would overflow the commit buffer) | `offer.ErrMessageTooLong` |
+| (unencodable name) | `offer.ErrNameTooLong` |
+| (no equivalent) | `offer.ErrEntityID`, `repo.ErrNameTooLong` from `SetHead`, and any I/O error |
+
 ## 2026-09-22: fossil delta and similarity (task 11a)
 
 - **Rename threshold**: Offer.HC/Status.HC/Diff.HC accept a candidate when

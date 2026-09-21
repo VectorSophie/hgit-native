@@ -4,6 +4,120 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-22: the recursive offertree and the relation wrappers (task 11c)
+
+Ports `Offer.HC`'s `TreeBuildRecursive`, `HgitOfferTreeWithRelation` and
+`HgitOfferTree` (ADR 0010), and the relation dispatch of `Hgit.HC`'s
+`HgitOfferRelatedCmd`/`HgitOfferTreeRelatedCmd` (ADR 0005).
+
+- **Byte-exact parity with `TFullTreeRepo.hgs`, whole file.** Replaying the
+  regression's two `offertree` steps and its `correcttree` step with the clock
+  frozen to the fixture's own three timestamps and `NewEntityID` seeded with
+  the fixture's own three entity ids reproduces all fifteen records - every
+  blob, both levels of tree, and all three commit hashes - in the same order
+  (`tests/offertree_scenario_test.go`). The regression's `FileWrite` lengths
+  there are the literal lengths exactly (11, 13, 21), with no trailing NUL,
+  unlike the flat scenario's 97-byte writes. The ignore step (`TFIgnoreRepo`,
+  `objects=4`) is replayed too: `.hgitignore` is itself an ordinary offered
+  file and is tracked, which is what makes that count 4.
+- **Object append order.** `TreeBuildRecursive` appends depth first in
+  directory order: a subdirectory's blobs and nested trees, then that
+  subdirectory's own tree object, then the parent's remaining files, then the
+  root tree, then the attrs object if any, then the commit. That order is
+  record order in the `.hgs`, so it is load-bearing for parity and is
+  reproduced exactly.
+- **Object count.** The flat path computes `rcount + entries + 2 + attrs`;
+  `offertree` instead re-scans the finished archive with `IndexBuild`, which
+  does **not** deduplicate - it indexes every record. Both therefore equal
+  "number of records", which is what `repo.Save` already writes into the
+  header, so no separate counting path is needed.
+- **`TREE_LEVEL_MAX` (4096), `COMMIT_HEADROOM`, `ARCHIVE_HEADROOM`,
+  `OBJECT_RECORD_OVERHEAD` and `ARCHIVE_SANITY_MAX` are not ported.** Every one
+  of them exists only to size a `MAlloc`'d buffer or a fixed stack array up
+  front. Go slices grow, so none of them changes observable behaviour: no entry
+  is ever skipped for want of room, and `tree_content[2048]`'s
+  `OFFER_SKIP tree_full` case cannot arise. The HolyC's per-level 2048/4096
+  byte caps are a limit this port does not have.
+- **Depth limit: `offer.MaxTreeDepth` (1024) is this port's own.** The HolyC
+  has no depth limit at all - `TREE_LEVEL_MAX` is a byte cap, not a depth - so
+  a pathological directory tree would recurse until the TempleOS stack gave
+  out. Rather than overflow Go's stack, `OfferTree` returns `ErrTooDeep`. 1024
+  sits above anything a real filesystem can hand back (Linux's `PATH_MAX` of
+  4096 bytes cannot express more than about 2048 single-character levels).
+- **Ignore matching is now the HolyC's exact `IsIgnored(name, rel_dir)` on
+  both paths.** `IsIgnored` never sees a full path: a NAME pattern globs the
+  candidate's basename, a DIR pattern is `StrCmp(pattern, name)` - the
+  candidate's own last component, **files and directories alike** - and a
+  DIR_CONTENTS pattern is `StrCmp(pattern, rel_dir)`. That is exactly
+  `ignore.Pattern.MatchLast`, so `ignore.Rules.IgnoredLast` was added and both
+  `Offer` and `OfferTree` use it. This closes the flat path's previous
+  divergence, raised in 11b's review: `Rules.Ignored(name, false)` did not hide
+  a plain *file* named exactly like a directory rule, where the HolyC does.
+  `Rules.Ignored(relPath, isDir)` is kept unchanged for status and diff, which
+  do match against whole paths.
+- **A tracked name is never hidden, at directory level too.** The HolyC
+  computes `name_was_tracked` from the parent tree before consulting the ignore
+  rules, and that flag is deliberately independent of the type-mismatch reset
+  below it: a directory whose old entry happened to be a *file* is still
+  "tracked" and still descended into, even though no old identity is carried
+  forward. Mirrored. A consequence worth stating: a *new* file inside an
+  already-tracked directory that a later `SubA/` rule covers is **not** hidden,
+  because that rule is matched against the file's own name, not its ancestor.
+- **A directory with nothing trackable produces no entry.** Zero child entries
+  means no tree object is stored and no entry is encoded - empty on disk, or
+  every child ignored, or only empty children. Confirmed in `Offer.HC`
+  (`if (GetU32LE(child_tree_content, 0) > 0)`), and the reason `check` never
+  sees an empty tree record.
+- **`.hgitignore`/`.hgitattributes` are read from the offered root only**, once
+  per offer, and their patterns are matched against the path relative to that
+  root (`rel_dir` grows as the recursion descends; the rule set never does).
+  Both files are themselves ordinary offered files and end up tracked.
+- **Attrs order.** One commit-level `OBJ_ATTRS` object lists every entity with
+  a non-zero mode across all levels, appended in traversal order - a nested
+  file's entry precedes a root file that sorts after its directory. That order
+  is the object's bytes, so it is reproduced rather than sorted.
+- **Relations are options, not new functions.** `HgitOfferRelatedCmd` and
+  `HgitOfferTreeRelatedCmd` only parse three tokens and call the same offer
+  with a tag, so `correct`/`revert`/`reconcile` are `offer.Offer` with
+  `Options.Relation` set to `object.RelCorrects`/`RelReverts`/`RelReconciles`
+  and `Options.RelationTarget` naming the commit, and the `...tree` variants
+  are the same options passed to `offer.OfferTree`. No wrapper functions were
+  added. Token-to-error mapping for the later CLI task:
+  `DISPATCH_ERR bad_hash <hex>` is `archive.ParseHex`'s error, and
+  `DISPATCH_ERR bad_entity_id <hex>` is the new `archive.ParseEntityID`'s.
+  `ParseEntityID` takes exactly 16 hex digits (`Hex.HC`'s `HexToU64` reads a
+  fixed 16 and refuses any non-digit; `HexDigit` accepts `A-F` as well as
+  `a-f`), and `"0000000000000000"` is the valid "not entity-scoped" sentinel,
+  not an error.
+- **An unreadable file fails the offer, by name.** `workdir.Read` returns a
+  `*workdir.ReadError` carrying the offered-root-relative path. The HolyC's
+  `HgitFileRead` would return NULL and the loop would store a zero-length
+  blob, silently committing nothing where a file exists; refusing is the
+  deliberate deviation. A symlink to a directory lands here too: `os.ReadDir`
+  reports a symlink by its own type, so the walk never follows one and never
+  loops, and reading it fails by name instead of descending.
+- **A file an ignore rule will drop is never opened.** The HolyC's recursive
+  loop calls `HgitFileRead` *before* its ignore check and throws the bytes
+  away; this port checks first. Observable only in that an unreadable ignored
+  file no longer fails the offer.
+- **`MaxMessageLen = 255`, restated precisely** (the 11b comment was
+  imprecise). The format stores the message length in a **U32**, so the field
+  is not the constraint. The HolyC's constraint is its fixed
+  `U8 commit_content[512]`: fixed fields cost 64+1+8+4+1+1 = 79 bytes for a
+  root offering with no relation and no attrs, and
+  64+1+64+8+4+1+(64+8)+1+64 = 279 bytes in the worst case (one parent, a
+  relation and an attrs object), leaving room for 433 and 233 message bytes
+  respectively. This port refuses anything over 255 - one flat limit, the same
+  U8 ceiling a tree entry's name has - rather than truncating. It is therefore
+  slightly more permissive than the HolyC's worst case (a 234..255-byte message
+  on a commit with a parent, a relation and attrs would have overflowed that
+  buffer in TempleOS) and much stricter than its best case.
+- **"Nothing is written unless the whole offer succeeds" was overstated** and
+  the code comment has been corrected. Every *input* is validated before the
+  first object is stored, but `repo.Save` writes the `.hgs` before the `.m`: a
+  failure between them leaves the new objects on disk with HEAD not moved,
+  which `check` reports as dangling. Recoverable, not atomic.
+
 ## 2026-09-22: init, working-directory listing and the flat offer (task 11b)
 
 Ports `Init.HC` and `Offer.HC`'s flat path (`HgitOffer`,

@@ -60,6 +60,19 @@ func ParseHex(s string) (Hash, error) {
 	return h, nil
 }
 
+// ParseEntityID parses the 16 hex characters an entity id is written as on
+// the command line (Hex.HC's U64ToHex/HexToU64, ADR 0006). Exactly 16 digits
+// are required - the HolyC reads a fixed 16 and refuses on any non-digit -
+// and "0000000000000000" is the valid "not entity-scoped" sentinel, not an
+// error.
+func ParseEntityID(s string) (uint64, error) {
+	b, err := hex.DecodeString(s)
+	if err != nil || len(s) != 16 {
+		return 0, fmt.Errorf("archive: bad entity id %q", s)
+	}
+	return binary.BigEndian.Uint64(b), nil // HexToU64 shifts the first digit highest
+}
+
 // Header is the 16-byte archive header. Reserved is preserved so a re-write
 // is byte-identical (readers must not reject a nonzero value).
 type Header struct {

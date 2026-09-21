@@ -1,18 +1,33 @@
-// Package workdir lists the files in a working directory that a flat offer or
-// status considers: the port of WorkDir.HC's FilesFind enumeration and the
-// find_mask handling in Offer.HC. It never prints.
+// Package workdir lists the files in a working directory that an offer or a
+// status considers: the port of Offer.HC's FilesFind enumeration, flat
+// (find_mask) and recursive (TreeBuildRecursive's own per-level scan). It
+// never prints, and it never reads a file the caller has not asked for.
 package workdir
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
 
-// File is one matched working-directory file.
-type File struct {
-	Name    string // the name inside dir, never a path
-	Content []byte
+// Node is one entry of a directory: a name and whether it is a directory.
+// Content is not read here - the caller decides what to read, after the
+// ignore rules have had their say.
+type Node struct {
+	Name  string // the name inside its directory, never a path
+	IsDir bool
 }
+
+// ReadError names a working-directory file that could not be read. An offer
+// fails on it rather than silently leaving the file out of the commit; the
+// name is relative to the offered root.
+type ReadError struct {
+	Name string
+	Err  error
+}
+
+func (e *ReadError) Error() string { return fmt.Sprintf("workdir: cannot read %s: %v", e.Name, e.Err) }
+func (e *ReadError) Unwrap() error { return e.Err }
 
 // Match reports whether a FilesFind-style mask matches name. Only '*' (any
 // run of bytes, including none) and '?' (exactly one byte) are special;
@@ -42,25 +57,46 @@ func Match(mask, name string) bool {
 	return pi == len(mask)
 }
 
-// List returns dir's immediate files whose name matches mask, sorted by name,
-// each with its content. Subdirectories are skipped: FilesFind is
-// non-recursive and a flat offer has no subdirectory entries. A mask that
-// matches nothing is not an error; an unreadable directory or file is.
-func List(dir, mask string) ([]File, error) {
+// ListDir returns dir's entries sorted by name, as the tree walk needs them.
+// A symlink is never followed: os.ReadDir reports it by its own type, so a
+// symlink to a directory is a plain file here and the walk can never loop.
+// Reading such a "file" then fails with a ReadError rather than descending.
+func ListDir(dir string) ([]Node, error) {
 	entries, err := os.ReadDir(dir) // sorted by name
 	if err != nil {
 		return nil, err
 	}
-	var out []File
+	out := make([]Node, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() || !Match(mask, e.Name()) {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, File{Name: e.Name(), Content: b})
+		out = append(out, Node{Name: e.Name(), IsDir: e.IsDir()})
 	}
 	return out, nil
+}
+
+// List returns dir's immediate files whose name matches mask, sorted by name.
+// Subdirectories are skipped: FilesFind is non-recursive and a flat offer has
+// no subdirectory entries. A mask that matches nothing is not an error.
+func List(dir, mask string) ([]Node, error) {
+	all, err := ListDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []Node
+	for _, n := range all {
+		if !n.IsDir && Match(mask, n.Name) {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
+// Read returns the content of the file at rel inside root. rel is a
+// slash-separated path relative to the offered root, and is what a failure
+// names.
+func Read(root, rel string) ([]byte, error) {
+	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return nil, &ReadError{Name: rel, Err: err}
+	}
+	return b, nil
 }

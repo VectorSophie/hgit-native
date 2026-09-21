@@ -103,3 +103,23 @@ func TestVerifyDetectsCorruption(t *testing.T) {
 		t.Fatalf("verify %d/%d", ok, total)
 	}
 }
+
+func TestParseEntityID(t *testing.T) {
+	good := map[string]uint64{
+		"0000000000000000": 0,
+		"fecf09b6855459dc": 0xfecf09b6855459dc,
+		"FECF09B6855459DC": 0xfecf09b6855459dc, // HexDigit accepts A-F too
+		"ffffffffffffffff": ^uint64(0),
+	}
+	for s, want := range good {
+		got, err := ParseEntityID(s)
+		if err != nil || got != want {
+			t.Errorf("ParseEntityID(%q) = %#x, %v; want %#x", s, got, err, want)
+		}
+	}
+	for _, s := range []string{"", "0", "fecf09b6855459d", "fecf09b6855459dc0", "fecf09b6855459dg", "fecf09b6855459d "} {
+		if _, err := ParseEntityID(s); err == nil {
+			t.Errorf("ParseEntityID(%q) accepted a bad entity id", s)
+		}
+	}
+}

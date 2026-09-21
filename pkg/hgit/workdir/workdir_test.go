@@ -1,6 +1,7 @@
 package workdir_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -61,8 +62,61 @@ func TestList(t *testing.T) {
 	if files[0].Name != "TFa.txt" || files[1].Name != "TFb.txt" {
 		t.Fatalf("order = %q %q, want sorted", files[0].Name, files[1].Name)
 	}
-	if string(files[0].Content) != "ay" {
-		t.Fatalf("content = %q", files[0].Content)
+	b, err := workdir.Read(dir, files[0].Name)
+	if err != nil || string(b) != "ay" {
+		t.Fatalf("Read = %q, %v", b, err)
+	}
+}
+
+func TestListDirReportsDirectories(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := workdir.ListDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []workdir.Node{{Name: "a.txt"}, {Name: "sub", IsDir: true}}
+	if len(nodes) != 2 || nodes[0] != want[0] || nodes[1] != want[1] {
+		t.Fatalf("ListDir = %+v, want %+v", nodes, want)
+	}
+}
+
+// A symlink to a directory is never followed: it is reported as a plain file,
+// so the walk cannot loop, and reading it fails by name instead of descending.
+func TestListDirDoesNotFollowASymlinkToADirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "real"), filepath.Join(dir, "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	nodes, err := workdir.ListDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 || nodes[0].Name != "link" || nodes[0].IsDir {
+		t.Fatalf("ListDir = %+v, want link reported as a plain file", nodes)
+	}
+	var re *workdir.ReadError
+	if _, err := workdir.Read(dir, "link"); !errors.As(err, &re) || re.Name != "link" {
+		t.Fatalf("Read(link) = %v, want a *workdir.ReadError naming it", err)
+	}
+}
+
+func TestReadNamesTheFileItCouldNotRead(t *testing.T) {
+	var re *workdir.ReadError
+	_, err := workdir.Read(t.TempDir(), "sub/missing.txt")
+	if !errors.As(err, &re) {
+		t.Fatalf("err = %v, want a *workdir.ReadError", err)
+	}
+	if re.Name != "sub/missing.txt" {
+		t.Fatalf("ReadError names %q", re.Name)
 	}
 }
 

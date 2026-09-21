@@ -102,3 +102,33 @@ func TestFuzzNoPanic(t *testing.T) {
 		_ = r.Ignored(gen(12), rng.Intn(2) == 0)
 	}
 }
+
+// IgnoredLast is the exact shape of the HolyC's IsIgnored(name, rel_dir):
+// a directory rule is compared with the candidate's own last component only,
+// files and directories alike, and a "dir/*" rule with its parent directory.
+func TestIgnoredLast(t *testing.T) {
+	r := ParseIgnore("*.tmp\nbuild/\ngenerated/*\n")
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"x.tmp", true},
+		{"SubA/x.tmp", true},
+		{"build", true},           // the directory itself
+		{"build", true},           // ...and a plain FILE of that name, as the HolyC hides it
+		{"build/keep.txt", false}, // never reached: the caller does not descend
+		{"SubA/build", true},
+		{"generated/a.txt", true},
+		{"deep/generated/a.txt", false}, // DIR_CONTENTS compares the whole rel dir
+		{"keep.txt", false},
+	}
+	for _, c := range cases {
+		if got := r.IgnoredLast(c.path); got != c.want {
+			t.Errorf("IgnoredLast(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+	var nilRules *Rules
+	if nilRules.IgnoredLast("anything") {
+		t.Error("no rules must ignore nothing")
+	}
+}

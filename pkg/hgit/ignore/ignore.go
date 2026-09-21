@@ -90,6 +90,28 @@ func (p Pattern) MatchLast(relPath string) bool {
 	return p.Match(relPath, false)
 }
 
+// IgnoredLast is the exact shape of the HolyC's IsIgnored(name, rel_dir),
+// which never sees a full path: a name pattern globs the candidate's own last
+// component, a directory pattern is compared with that last component for
+// directories and plain files alike (never with an ancestor - the HolyC never
+// descends into an ignored directory, so it never needs to), and a "dir/*"
+// pattern is compared with relPath's directory part. Last matching rule wins.
+//
+// Both offer paths use this. Ignored above keeps the path-and-isDir shape
+// that status and diff will want.
+func (r *Rules) IgnoredLast(relPath string) bool {
+	if r == nil {
+		return false
+	}
+	ignored := false
+	for _, ru := range r.rules {
+		if ru.pat.MatchLast(relPath) {
+			ignored = !ru.neg
+		}
+	}
+	return ignored
+}
+
 // globMatch: only '*' is special (any run, including empty); the rest literal.
 func globMatch(pat, s string) bool {
 	pi, si := 0, 0

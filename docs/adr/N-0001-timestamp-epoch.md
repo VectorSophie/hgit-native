@@ -11,8 +11,16 @@ not say what it counts.
 
 In the TempleOS source it is `cnts.jiffies`
 (`contract/src/hgit-cli/Hgit.HC`, lines 42, 156, 189 and 321-364): ticks since
-boot, with `JIFFY_FREQ` = 1000 per second. It is uptime, not wall-clock time.
-`ts=9547867` in the fixtures is about 2.6 hours of uptime.
+boot. It is uptime, not wall-clock time. TempleOS's jiffy counter runs at 1000
+per second (`JIFFY_FREQ` in the TempleOS kernel; the kernel source is not part
+of this repository, so the rate is taken from TempleOS documentation rather
+than verified here).
+
+The values in `contract/fixtures/expected.log` are small: `ts=1`, `4`, `7`,
+`10`, `14`, `15`, `16`, `18`, `25` (tiny values that look test-set) and
+`345402`, `394453`, `512602` from real offers (345402 ticks is about 5.8
+minutes at 1000 per second). An older run,
+`contract/tests/serial-log-passing-run.txt`, has `ts=9547867`, about 2.6 hours.
 
 History order comes from parent links, never from timestamps, so nothing in
 the format or in any command depends on the value. The only risk is display:
@@ -23,7 +31,8 @@ one.
 ## Decision
 
 Native writers store Unix time in **milliseconds** in the existing `U64`
-field. The unit matches TempleOS's 1000 ticks per second.
+field. The unit matches TempleOS's 1000 ticks per second (see Context for the
+source of that rate).
 
 A reader treats a value below `1_000_000_000_000` (before 2001-09-09 in ms)
 as TempleOS uptime ticks, wall-clock time unknown, and shows it as a relative
@@ -51,6 +60,9 @@ Implemented in `pkg/hgit/clock`.
 - Threshold limit: a TempleOS machine would need 31.7 years of uptime to reach
   it, which is implausible. A native clock set before 2001-09-09 is not
   supported; its commits would display as ticks.
+- Only the unit annotation depends on the 1000 per second rate. The threshold
+  logic and the decision hold at any tick rate, unless a machine accumulates
+  more than 1e12 ticks.
 - TempleOS reading a native-written repo sees a large number it does not
   interpret; the field stays a valid `U64`.
 

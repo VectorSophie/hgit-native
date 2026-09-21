@@ -39,6 +39,15 @@ func TestFormat(t *testing.T) {
 	}
 }
 
+func TestFormatYear9999(t *testing.T) {
+	if got := Format(253402300799999); got != "9999-12-31T23:59:59.999Z" {
+		t.Errorf("got %q", got)
+	}
+	if got := Format(253402300800000); !strings.HasPrefix(got, "invalid:") {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestFormatHuge(t *testing.T) {
 	if got := Format(math.MaxUint64); got != "invalid:18446744073709551615" {
 		t.Errorf("got %q", got)
@@ -50,6 +59,7 @@ func TestNowReplaceable(t *testing.T) {
 		t.Fatal("Now not above threshold")
 	}
 	orig := Now
+	t.Cleanup(func() { Now = orig })
 	Now = func() uint64 { return 42 }
 	if Now() != 42 {
 		t.Fatal("not replaced")

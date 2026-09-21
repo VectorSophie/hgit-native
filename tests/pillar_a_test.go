@@ -47,6 +47,8 @@ func TestFixtureNewerFormatRejected(t *testing.T) {
 }
 
 func TestFixtureObjectsRoundTrip(t *testing.T) {
+	treeCount := 0
+	commitCount := 0
 	for _, name := range testfix.Names(t, ".hgs") {
 		if name == "TFConfNewer.hgs" {
 			continue
@@ -59,11 +61,19 @@ func TestFixtureObjectsRoundTrip(t *testing.T) {
 			var enc []byte
 			switch r.Type() {
 			case archive.Tree:
+				treeCount++
 				tr, err := object.DecodeTree(r.Content())
 				if err != nil {
 					t.Fatalf("%s #%d tree: %v", name, i, err)
 				}
 				enc = tr.Encode()
+			case archive.Commit:
+				commitCount++
+				c, err := object.DecodeCommit(r.Content())
+				if err != nil {
+					t.Fatalf("%s #%d commit: %v", name, i, err)
+				}
+				enc = c.Encode()
 			default:
 				continue
 			}
@@ -71,5 +81,11 @@ func TestFixtureObjectsRoundTrip(t *testing.T) {
 				t.Fatalf("%s #%d %v: re-encode differs", name, i, r.Type())
 			}
 		}
+	}
+	if treeCount == 0 {
+		t.Fatal("no trees decoded")
+	}
+	if commitCount == 0 {
+		t.Fatal("no commits decoded")
 	}
 }

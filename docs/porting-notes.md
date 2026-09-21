@@ -16,8 +16,9 @@ Go is written.
   source offset then target offset, strictly longer wins; min copy length 4;
   similarity is `best*100/len(target)` with integer division, 0 for an empty
   target (an empty source scores 0 too, identical non-empty inputs 100).
-  Cost is O(len(source)*len(target)); the Go has no size ceiling and does not
+  Cost is O(n*m*min(n,m)) worst case on repetitive content; the Go has no size ceiling and does not
   truncate, so very large files are slow rather than skipped.
+- **Fuzzy-rename buffer ceiling**: the HolyC's caller (Status.HC lines ~172-181, 251) only buffers files of 512 bytes or less for fuzzy rename detection; the offer/status port will mirror that ceiling as a named constant.
 - **Ceilings live in callers, not Fossil.HC**: the HolyC Fossil functions have
   none; Status.HC buffers fuzzy-rename candidates in 512-byte slots and gives a
   larger file content length 0 (similarity 0). The later offer/status ports

@@ -117,7 +117,7 @@ func DeltaMakeTrivial(source, target []byte) []byte {
 
 // findLongestMatch returns the first-found longest common substring (scan
 // order: source offset, then target offset; strictly longer wins).
-// ponytail: O(len(source)*len(target)) exactly as the HolyC; a suffix
+// ponytail: O(n*m*min(n,m)) worst case on repetitive content (O(n*m) starts, each extending), exactly as the HolyC; a suffix
 // automaton would give the same answer faster if large files matter.
 func findLongestMatch(source, target []byte) (srcOff, tgtOff, length int) {
 	srcOff, tgtOff = -1, -1
@@ -182,7 +182,8 @@ func DeltaApply(source, delta []byte) ([]byte, error) {
 	if declared > maxApplyOutput || declared > limit {
 		return nil, errors.New("fossil: declared target length not producible")
 	}
-	out := make([]byte, 0, declared)
+	// Grow lazily: allocation tracks bytes actually produced, not the claim.
+	out := make([]byte, 0, min(declared, 64<<10))
 	for int64(len(out)) < declared {
 		segLen, p, err := GetInt(delta, pos)
 		if err != nil {

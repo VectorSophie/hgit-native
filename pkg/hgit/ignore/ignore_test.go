@@ -2,6 +2,7 @@ package ignore
 
 import (
 	"math/rand"
+	"strings"
 	"testing"
 )
 
@@ -58,7 +59,8 @@ func TestIgnored(t *testing.T) {
 		{"dir pattern vs file", "build/\n", "build", false, false},
 		{"dir pattern vs file in subdir", "build/\n", "src/build", false, false},
 		{"dir pattern exact name only", "build/\n", "rebuild", true, false},
-		{"long pattern skipped", string(make([]byte, 300)) + "\n", "x", false, false},
+		{"255-byte pattern accepted", strings.Repeat("a", 255) + "\n", strings.Repeat("a", 255), false, true},
+		{"256-byte pattern rejected", strings.Repeat("a", 256) + "\n", strings.Repeat("a", 256), false, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,7 +71,7 @@ func TestIgnored(t *testing.T) {
 	}
 }
 
-// Regression scenario: .hgitignore is "*.tmp\n"; keep.txt stays, x.tmp is
+// contract/tests/full-regression.hc lines 235-237: .hgitignore is "*.tmp\n"; keep.txt stays, x.tmp is
 // reported OFFER_IGNORED.
 func TestRegressionScenario(t *testing.T) {
 	r := ParseIgnore("*.tmp\n")

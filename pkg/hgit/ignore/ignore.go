@@ -79,6 +79,17 @@ func (p Pattern) Match(relPath string, isDir bool) bool {
 	return false
 }
 
+// MatchLast is the attributes flavour of Match: no dir/file distinction and no
+// subtree, so a Dir pattern matches only when the path's own last component
+// equals it; Name and DirContents behave as in Match.
+func (p Pattern) MatchLast(relPath string) bool {
+	if p.Kind == KindDir {
+		base := relPath[strings.LastIndexByte(relPath, '/')+1:]
+		return base == p.Text
+	}
+	return p.Match(relPath, false)
+}
+
 // globMatch: only '*' is special (any run, including empty); the rest literal.
 func globMatch(pat, s string) bool {
 	pi, si := 0, 0
@@ -136,6 +147,13 @@ func ParseIgnore(src string) *Rules {
 }
 
 // Ignored reports whether relPath is ignored: the last matching rule wins.
+//
+// Caller contract: the caller must know isDir, must never descend into a
+// directory reported ignored, and must consult tracking first (ADR 0014). A
+// negation that would re-include a file inside an ignored directory is never
+// evaluated by the HolyC because it does not descend; callers that follow that
+// contract get the same behaviour, although Ignored on such a path alone
+// reports true from the directory rule unless the negation matches later.
 func (r *Rules) Ignored(relPath string, isDir bool) bool {
 	ignored := false
 	if r == nil {

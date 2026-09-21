@@ -63,20 +63,23 @@ func ParseAttrs(src string) *AttrRules {
 // Mode resolves relPath's mode from the rules alone; the last matching rule
 // wins per dimension. explicit reports whether a rule set text/binary; when it
 // is false the caller must OR in object.ModeBinary if DetectBinary(content).
-// Executable is never auto-detected. Rules cannot tell files from directories
-// (as in the HolyC), so a dir pattern matches a same-named file too.
+// Executable is never auto-detected. Like the HolyC, a dir pattern is compared with the path's last component
+// only (dir/file agnostic, never an ancestor).
 func (r *AttrRules) Mode(relPath string) (mode byte, explicit bool) {
 	if r == nil {
 		return 0, false
 	}
 	execSet := false
 	for _, ru := range r.rules {
-		if !ru.pat.Match(relPath, true) {
+		if !ru.pat.MatchLast(relPath) {
 			continue
 		}
 		if ru.sets&1 != 0 {
 			explicit = true
-			mode = mode&^object.ModeBinary | ru.values&1*object.ModeBinary
+			mode &^= object.ModeBinary
+			if ru.values&1 != 0 {
+				mode |= object.ModeBinary
+			}
 		}
 		if ru.sets&2 != 0 {
 			execSet = ru.values&2 != 0

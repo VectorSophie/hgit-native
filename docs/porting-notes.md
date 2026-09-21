@@ -9,12 +9,24 @@ Go is written.
 - **`*` never meets `/`**: matching is on the basename (name patterns) so the
   question does not arise; glob is the HolyC one (`*` = any run, nothing else
   special).
-- **Dir pattern needs `isDir`** (deviation): the HolyC compared names with no
-  dir/file distinction. `Ignored("build", false)` is false here (a file named
-  `build` is not a directory). A dir pattern also matches any ancestor
-  component, so files under `build/` report ignored (HolyC relied on the caller
-  not descending). `Mode` has no `isDir`, so attrs dir patterns match a
-  same-named file as in the HolyC.
+- **Ignore: dir pattern needs `isDir`** (deviation): the HolyC compared names
+  with no dir/file distinction. `Ignored("build", false)` is false here. A dir
+  pattern also matches any ancestor component so files under `build/` report
+  ignored (the HolyC relied on the caller not descending).
+- **Caller contract for ignore**: the caller knows `isDir`, never descends
+  into an ignored directory, and checks tracking first. A negation that would
+  re-include a file inside an ignored directory is never evaluated by the
+  HolyC (no descent), and callers following the contract match that.
+- **Attrs match the last component only, as in the HolyC**: a dir pattern
+  (`assets/ binary`) is compared with the path's basename, dir/file agnostic,
+  no subtree, never an ancestor (`x/assets/f.dat` gets nothing). Anchored
+  `build/* binary` matches direct children of root `build` only.
+- **Attrs line parsing verified against Attrs.HC**: split on the first space
+  only (tabs are not separators); `sp>0 && sp<len-1`; tokens split on `,`,
+  empty tokens skipped, unknown tokens ignored while known ones in the same
+  rule still apply; a rule with no known token is dropped. HolyC truncates
+  tokens to 31 bytes and StrCmp stops at an embedded NUL, so `text\0x` would
+  match there; not mirrored.
 - **No trimming**: only one trailing `\r` is removed. `*.tmp ` (trailing space)
   is the literal pattern `*.tmp `. In attrs, `*.png binary ` has token
   `binary ` (unknown) and the rule is dropped.

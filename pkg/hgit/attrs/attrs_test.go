@@ -47,7 +47,18 @@ func TestMode(t *testing.T) {
 		{"trailing space after attr is unknown token", "*.png binary \n", "a.png", 0, false},
 		{"leading space no pattern", " binary\n", "a.png", 0, false},
 		{"slash pattern skipped", "a/b.png binary\n", "a/b.png", 0, false},
-		{"dir pattern subtree", "assets/ binary\n", "x/assets/f.dat", bin, true},
+		{"dir pattern no subtree", "assets/ binary\n", "x/assets/f.dat", 0, false},
+		{"dir pattern last component", "assets/ binary\n", "x/assets", bin, true},
+		{"dir pattern root", "assets/ binary\n", "assets", bin, true},
+		{"dir pattern same-named file", "assets/ binary\n", "sub/assets", bin, true},
+		{"anchored vs nested", "build/* binary\n", "x/build/f", 0, false},
+		{"anchored root child", "build/* binary\n", "build/f", bin, true},
+		{"tab is not a separator", "*.png\tbinary\n", "a.png", 0, false},
+		{"tab in token is unknown", "*.png binary\t\n", "a.png", 0, false},
+		{"space then only comma", "*.png ,\n", "a.png", 0, false},
+		{"unknown attr foo", "*.png foo\n", "a.png", 0, false},
+		{"lone slash pattern", "/ binary\n", "a", 0, false},
+		{"second space is inside token", "*.png binary,text extra\n", "a.png", bin, true},
 		{"negation not supported (literal)", "!*.png binary\n", "a.png", 0, false},
 		{"empty", "", "a", 0, false},
 	}
@@ -58,6 +69,21 @@ func TestMode(t *testing.T) {
 				t.Errorf("Mode(%q) with %q = (%d,%v), want (%d,%v)", tc.path, tc.rules, m, e, tc.mode, tc.explicit)
 			}
 		})
+	}
+}
+
+// contract/tests/full-regression.hc lines 253-257: .hgitattributes is
+// "TFAttrsScript.txt executable\n" and TFAttrsScript.txt ("echo hi", text)
+// is expected as STATUS_MODE_CHANGED 0 -> 2 (fixtures/expected.log line 141).
+func TestRegressionScenario(t *testing.T) {
+	r := ParseAttrs("TFAttrsScript.txt executable\n")
+	auto := DetectBinary([]byte("echo hi"))
+	m, explicit := r.Mode("TFAttrsScript.txt")
+	if !explicit && auto {
+		m |= bin
+	}
+	if m != 2 {
+		t.Fatalf("mode = %d, want 2", m)
 	}
 }
 

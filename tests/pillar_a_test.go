@@ -7,6 +7,7 @@ import (
 
 	"github.com/VectorSophie/hgit-native/internal/testfix"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/archive"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/object"
 )
 
 // Pillar A: native reads what TempleOS wrote.
@@ -42,5 +43,33 @@ func TestFixtureNewerFormatRejected(t *testing.T) {
 	var uv *archive.UnsupportedVersionError
 	if !errors.As(err, &uv) || uv.Version != 9 {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestFixtureObjectsRoundTrip(t *testing.T) {
+	for _, name := range testfix.Names(t, ".hgs") {
+		if name == "TFConfNewer.hgs" {
+			continue
+		}
+		a, err := archive.Parse(testfix.Read(t, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, r := range a.Records {
+			var enc []byte
+			switch r.Type() {
+			case archive.Tree:
+				tr, err := object.DecodeTree(r.Content())
+				if err != nil {
+					t.Fatalf("%s #%d tree: %v", name, i, err)
+				}
+				enc = tr.Encode()
+			default:
+				continue
+			}
+			if !bytes.Equal(enc, r.Content()) {
+				t.Fatalf("%s #%d %v: re-encode differs", name, i, r.Type())
+			}
+		}
 	}
 }

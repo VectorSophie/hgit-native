@@ -95,15 +95,32 @@ func (r *Repo) Get(h archive.Hash) (archive.Record, bool) {
 	return rec, true
 }
 
-// Put appends the object if absent and returns its hash.
-func (r *Repo) Put(t archive.Type, content []byte) archive.Hash {
+// Append stores the object unconditionally, as ObjectPut does: offering the
+// same content twice leaves two records, which is what `check` counts and
+// what the golden repositories contain. The hash index keeps pointing at the
+// first occurrence, so Get stays stable - duplicate records are
+// byte-identical by construction. Commands that record a working directory
+// use this.
+func (r *Repo) Append(t archive.Type, content []byte) archive.Hash {
 	rec := archive.NewObject(t, content)
 	if _, ok := r.idx[rec.Hash]; !ok {
 		r.idx[rec.Hash] = len(r.Arc.Records)
-		r.Arc.Records = append(r.Arc.Records, rec)
-		r.Arc.Header.Count = uint64(len(r.Arc.Records))
 	}
+	r.Arc.Records = append(r.Arc.Records, rec)
+	r.Arc.Header.Count = uint64(len(r.Arc.Records))
 	return rec.Hash
+}
+
+// Put is the deduplicating variant: it stores the object only when the
+// archive does not already hold that hash. The HolyC has no equivalent, so
+// nothing that mirrors an ObjectPut call may use it - the object count would
+// stop matching what TempleOS wrote.
+func (r *Repo) Put(t archive.Type, content []byte) archive.Hash {
+	rec := archive.NewObject(t, content)
+	if _, ok := r.idx[rec.Hash]; ok {
+		return rec.Hash
+	}
+	return r.Append(t, content)
 }
 
 // CurrentPath is the current path's name, "main" if unset.

@@ -22,13 +22,6 @@ import (
 	"github.com/VectorSophie/hgit-native/pkg/hgit/workdir"
 )
 
-// MaxFuzzyRenameBytes bounds which files take part in fuzzy (edited-during-
-// rename) detection. The HolyC buffers fuzzy-rename candidates in fixed
-// 512-byte slots (Status.HC), so a larger file never scores; mirrored here as
-// a parity choice, and raisable on its own. Exact-name and exact-content
-// identity are unaffected, at any size.
-const MaxFuzzyRenameBytes = 512
-
 // MaxMessageLen is the longest commit message this port accepts. The HolyC
 // builds its commit in a 512-byte stack buffer; rather than overflow or
 // truncate, an over-long message is refused.
@@ -116,7 +109,7 @@ func Offer(r *repo.Repo, work string, mask string, opts Options) (archive.Hash, 
 			}
 			continue
 		}
-		blob := r.Put(archive.Blob, f.Content)
+		blob := r.Append(archive.Blob, f.Content)
 
 		id, ok := CarryEntityID(r, old, f.Name, blob, f.Content)
 		if !ok {
@@ -144,7 +137,7 @@ func Offer(r *repo.Repo, work string, mask string, opts Options) (archive.Hash, 
 	}
 
 	c := &object.Commit{
-		Tree:           r.Put(archive.Tree, tree.Encode()),
+		Tree:           r.Append(archive.Tree, tree.Encode()),
 		Timestamp:      clock.Now(),
 		Message:        []byte(opts.Message),
 		Relation:       opts.Relation,
@@ -155,10 +148,10 @@ func Offer(r *repo.Repo, work string, mask string, opts Options) (archive.Hash, 
 		c.Parents = []archive.Hash{parent}
 	}
 	if len(list.Entries) > 0 {
-		h := r.Put(archive.Attrs, list.Encode())
+		h := r.Append(archive.Attrs, list.Encode())
 		c.Attrs = &h
 	}
-	commit := r.Put(archive.Commit, c.Encode())
+	commit := r.Append(archive.Commit, c.Encode())
 
 	// OpLogAppend: log the HEAD transition (all-zero prev for a root
 	// offering) and clear the redo log, since new work invalidates whatever
@@ -204,10 +197,12 @@ func CarryEntityID(r *repo.Repo, old *object.Tree, name string, blob archive.Has
 
 // FindFuzzyRename ports OfferFindFuzzyRename: score target against every blob
 // in old whose content the archive still holds and return the best-scoring
-// entry's identity, if it reaches the rename threshold. Ties go to the entry
-// seen first, and no cross-file disambiguation is attempted (ADR 0009).
+// entry's identity, if it reaches fossil.RenameSimilarityThreshold. Ties go
+// to the entry seen first, and no cross-file disambiguation is attempted
+// (ADR 0009). Size is not a criterion - the offer path has no per-file cap -
+// so this is the unbounded scan the HolyC runs.
 func FindFuzzyRename(r *repo.Repo, old *object.Tree, target []byte) (uint64, bool) {
-	if old == nil || len(target) > MaxFuzzyRenameBytes {
+	if old == nil {
 		return 0, false
 	}
 	best, bestID := -1, uint64(0)
@@ -219,11 +214,7 @@ func FindFuzzyRename(r *repo.Repo, old *object.Tree, target []byte) (uint64, boo
 		if !ok || rec.Type() != archive.Blob {
 			continue
 		}
-		content := rec.Content()
-		if len(content) > MaxFuzzyRenameBytes {
-			continue
-		}
-		if sim := fossil.SimilarityPercent(content, target); sim > best {
+		if sim := fossil.SimilarityPercent(rec.Content(), target); sim > best {
 			best, bestID = sim, e.EntityID
 		}
 	}

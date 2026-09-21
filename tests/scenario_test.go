@@ -24,9 +24,11 @@ func segment(t *testing.T, log, begin, end string) string {
 }
 
 var (
-	reTS   = regexp.MustCompile(`ts=\d+`)
+	reTS   = regexp.MustCompile(`\bts=\d+`) // \b so "objects=14" keeps its count
 	reHash = regexp.MustCompile(`\b[0-9a-f]{128}\b`)
 	reEnt  = regexp.MustCompile(`\b[0-9a-f]{16}\b`)
+	// reCount is applied only where the fixture outlived the log segment.
+	reCount = regexp.MustCompile(`objects=\d+`)
 )
 
 // normalize masks values that legitimately differ between runs.
@@ -104,17 +106,26 @@ func serialCheckFixture(t *testing.T, name string) string {
 
 func TestScenarioCheck(t *testing.T) {
 	log := testfix.ExpectedLog(t)
-	for _, c := range []struct{ fixture, begin, end string }{
-		{"TFullExported.hgs", "TFULL_CHECK_EXPORTED_BEGIN", "TFULL_CHECK_EXPORTED_END_MARKER"},
-		{"TFullImported.hgs", "TFULL_CHECK_IMPORTED_BEGIN", "TFULL_CHECK_IMPORTED_END_MARKER"},
-		{"TFullTreeRepo.hgs", "TFULL_CHECK_TREE_BEGIN", "TFULL_CHECK_TREE_END_MARKER"},
-		{"TFullMergeRepo.hgs", "TFULL_CHECK_MERGED_BEGIN", "TFULL_CHECK_MERGED_END_MARKER"},
-		{"TFIgnoreRepo.hgs", "TFULL_IGNORE_CHECK_BEGIN", "TFULL_IGNORE_CHECK_END_MARKER"},
-		{"TFAttrsRepo.hgs", "TFULL_ATTRS_CHECK_BEGIN", "TFULL_ATTRS_CHECK_END_MARKER"},
-		{"TFMergeModeRepo.hgs", "TFULL_MERGEMODE_CHECK_BEGIN", "TFULL_MERGEMODE_CHECK_END_MARKER"},
+	for _, c := range []struct {
+		fixture, begin, end string
+		// movedOn: the scenario kept working on this repo after the segment,
+		// so the saved fixture holds more objects than the segment counted.
+		// Everything but the count is still comparable.
+		movedOn bool
+	}{
+		{fixture: "TFullExported.hgs", begin: "TFULL_CHECK_EXPORTED_BEGIN", end: "TFULL_CHECK_EXPORTED_END_MARKER"},
+		{fixture: "TFullImported.hgs", begin: "TFULL_CHECK_IMPORTED_BEGIN", end: "TFULL_CHECK_IMPORTED_END_MARKER"},
+		{fixture: "TFullTreeRepo.hgs", begin: "TFULL_CHECK_TREE_BEGIN", end: "TFULL_CHECK_TREE_END_MARKER"},
+		{fixture: "TFullMergeRepo.hgs", begin: "TFULL_CHECK_MERGED_BEGIN", end: "TFULL_CHECK_MERGED_END_MARKER", movedOn: true},
+		{fixture: "TFIgnoreRepo.hgs", begin: "TFULL_IGNORE_CHECK_BEGIN", end: "TFULL_IGNORE_CHECK_END_MARKER"},
+		{fixture: "TFAttrsRepo.hgs", begin: "TFULL_ATTRS_CHECK_BEGIN", end: "TFULL_ATTRS_CHECK_END_MARKER"},
+		{fixture: "TFMergeModeRepo.hgs", begin: "TFULL_MERGEMODE_CHECK_BEGIN", end: "TFULL_MERGEMODE_CHECK_END_MARKER"},
 	} {
 		got := serialCheckFixture(t, c.fixture)
 		want := segment(t, log, c.begin, c.end)
+		if c.movedOn {
+			got, want = reCount.ReplaceAllString(got, "objects=N"), reCount.ReplaceAllString(want, "objects=N")
+		}
 		if normalize(strings.TrimSpace(got)) != normalize(want) {
 			t.Errorf("%s vs %s:\n got:\n%s\nwant:\n%s", c.fixture, c.begin, got, want)
 		}

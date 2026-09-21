@@ -10,6 +10,7 @@ import (
 	"github.com/VectorSophie/hgit-native/pkg/hgit/archive"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/check"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/clock"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/fossil"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/meta"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/object"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/offer"
@@ -269,32 +270,69 @@ func varied(n int) string {
 	return b.String()
 }
 
-func fuzzyRenameDetected(t *testing.T, size int) bool {
+func fuzzyRenameDetected(t *testing.T, src, edited string) bool {
 	t.Helper()
 	f := setup(t)
-	src := varied(size)
 	f.write("orig.txt", src)
 	first := f.offerMsg("*.txt", "first")
 	want := idOf(t, f.tree(first), "orig.txt")
 
-	edited := []byte(src)
-	edited[size-1] ^= 0x20 // one byte changed: ~99% similar
 	f.remove("orig.txt")
-	f.write("renamed.txt", string(edited))
+	f.write("renamed.txt", edited)
 	second := f.offerMsg("*.txt", "second")
 	return idOf(t, f.tree(second), "renamed.txt") == want
 }
 
-func TestFuzzyRenameAtCeiling(t *testing.T) {
-	if !fuzzyRenameDetected(t, offer.MaxFuzzyRenameBytes) {
-		t.Fatalf("a %d-byte rename-with-edit should be detected", offer.MaxFuzzyRenameBytes)
+// Offer.HC passes the whole file to OfferFindFuzzyRename - probe 106 lifted
+// every per-file cap on the flat path - so size is not a criterion here. (The
+// 512-byte candidate slots belong to Status.HC, not to offer.)
+func TestFuzzyRenameOfALargeFile(t *testing.T) {
+	for _, n := range []int{512, 513, 4096} {
+		src := varied(n)
+		edited := []byte(src)
+		edited[n-1] ^= 0x20 // one byte changed
+		if !fuzzyRenameDetected(t, src, string(edited)) {
+			t.Errorf("a %d-byte rename-with-edit should carry its entity id", n)
+		}
 	}
 }
 
-func TestFuzzyRenameOverCeiling(t *testing.T) {
-	if fuzzyRenameDetected(t, offer.MaxFuzzyRenameBytes+1) {
-		t.Fatalf("a %d-byte rename-with-edit is over the ceiling and must not be detected",
-			offer.MaxFuzzyRenameBytes+1)
+// The only criterion is fossil.RenameSimilarityThreshold, on the percentage of
+// the new file covered by the single longest match.
+func TestFuzzyRenameThresholdIsTheOnlyCriterion(t *testing.T) {
+	at := strings.Repeat("z", 50)
+	if got := fossil.SimilarityPercent([]byte(varied(50)+at), []byte(varied(50)+strings.Repeat("y", 50))); got != fossil.RenameSimilarityThreshold {
+		t.Fatalf("test inputs score %d, want exactly %d", got, fossil.RenameSimilarityThreshold)
+	}
+	if !fuzzyRenameDetected(t, varied(50)+at, varied(50)+strings.Repeat("y", 50)) {
+		t.Error("a candidate scoring exactly the threshold is a rename")
+	}
+	if got := fossil.SimilarityPercent([]byte(varied(49)+strings.Repeat("z", 51)), []byte(varied(49)+strings.Repeat("y", 51))); got != fossil.RenameSimilarityThreshold-1 {
+		t.Fatalf("test inputs score %d, want %d", got, fossil.RenameSimilarityThreshold-1)
+	}
+	if fuzzyRenameDetected(t, varied(49)+strings.Repeat("z", 51), varied(49)+strings.Repeat("y", 51)) {
+		t.Error("a candidate one point below the threshold is not a rename")
+	}
+}
+
+// Best score wins, over every blob in the parent tree.
+func TestFuzzyRenameBestScoreWins(t *testing.T) {
+	f := setup(t)
+	f.write("weak.txt", strings.Repeat("a", 100))
+	f.write("strong.txt", strings.Repeat("a", 50)+strings.Repeat("b", 50))
+	first := f.offerMsg("*.txt", "first")
+	tr1 := f.tree(first)
+
+	f.remove("weak.txt")
+	f.remove("strong.txt")
+	f.write("moved.txt", strings.Repeat("a", 20)+strings.Repeat("b", 80))
+	second := f.offerMsg("*.txt", "second")
+	got := idOf(t, f.tree(second), "moved.txt")
+	if got == idOf(t, tr1, "weak.txt") {
+		t.Fatal("the weaker candidate won")
+	}
+	if got != idOf(t, tr1, "strong.txt") {
+		t.Fatal("the best-scoring candidate should have carried its entity id")
 	}
 }
 

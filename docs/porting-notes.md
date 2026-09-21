@@ -19,15 +19,22 @@ reuse per directory level.
   reproduces every blob hash in `TFullRepo.hgs` (`tests/offer_scenario_test.go`).
   The NUL makes that file binary, which is why both fixture commits carry a
   one-entry `OBJ_ATTRS` object - reproduced too.
-- **Fuzzy-rename ceiling (deviation, deliberate).** `MaxFuzzyRenameBytes = 512`
-  keeps files over 512 bytes out of fuzzy (edited-during-rename) detection, on
-  either side of the comparison. This mirrors `Status.HC`'s fixed 512-byte
-  candidate slots, but `Offer.HC`'s own flat path has **no** such ceiling: probe
-  106 lifted every per-file cap there and passes the whole file to
-  `OfferFindFuzzyRename`. So this is stricter than the offer HolyC, taken for
-  parity with status and to bound an O(n*m*min(n,m)) scan; raising it is a
-  one-line change with no format consequence. Exact-name and exact-content
-  identity are unaffected at any size.
+- **No fuzzy-rename size ceiling in `offer`, because the HolyC has none.**
+  Probe 106 lifted every per-file cap on the flat path, and
+  `HgitOfferWithRelation` hands the whole file to `OfferFindFuzzyRename`
+  whatever its size. The only criterion is
+  `fossil.RenameSimilarityThreshold` (50), best score wins, ties to the entry
+  seen first. The fixed 512-byte candidate slots belong to **status and diff**,
+  not to offer: `Status.HC` lines ~172-181 and ~251 buffer each new file in a
+  512-byte slot and give a larger file content length 0 (similarity 0), and
+  `Diff.HC` ~329 scores against those same slots. The status/statustree/diff
+  port **must** mirror that ceiling as a named constant in its own package, or
+  it will report renames the HolyC does not. Offer must not.
+- **Cost of the unbounded scan.** `fossil`'s longest-common-substring search is
+  O(n*m*min(n,m)) worst case, and offer runs it once per (parent-tree blob x
+  new file that matched neither by name nor by hash) pair - unbounded, exactly
+  as the HolyC. Large files with an edited rename are slow rather than skipped.
+  If that ever matters, the fix is a better matcher, not a size cap.
 - **Tree entry order.** `Offer.HC` never sorts: entries land in `FilesFind`
   order. The fixture's trees are in lexicographic order by name, which is also
   what `os.ReadDir` returns, so `workdir.List` sorts by name and the entry
@@ -37,14 +44,25 @@ reuse per directory level.
   sensitive. `workdir.List` skips subdirectories; the HolyC's flat loop does
   not check `attr & 16` and would `FileRead` a directory entry, which no real
   mask exercises.
-- **Object deduplication (pre-existing, visible here first).** `ObjectPut`
-  appends unconditionally, so TempleOS stores a fresh copy of every unchanged
-  file's blob on every offer - `TFullRepo.hgs` holds `never touched` three
-  times and reports `objects=14` after two offers. `repo.Put` stores one copy
-  per hash, so a natively produced repo has fewer records and a lower object
-  count for the same history. Content and hashes are identical; only the record
-  count differs. The later CLI task cannot expect `expected.log`'s
-  `CHECK_OK objects=N` numbers from a natively built repo.
+- **Duplicate object records are kept, as `ObjectPut` keeps them.**
+  `ObjectPut` is a plain append with no content-hash dedup, so an offer stores
+  a fresh record for every matched file even when the bytes are unchanged, and
+  for the attrs object even when it is identical to the parent commit's.
+  Decoding `TFullRepo.hgs` shows exactly that: after two offers it holds 14
+  records, of which `never touched` (`e523b977...`) and the one-entry attrs
+  object (`2004939e...`) each appear twice, and `check` reports
+  `CHECK_OK objects=14`. `repo.Append` mirrors that (always appends, bumps the
+  header count, leaves the hash index pointing at the first occurrence) and is
+  what `offer` uses for blobs, the tree, the attrs object and the commit.
+  `repo.Put` remains as the deduplicating variant - after this change nothing
+  on the write path uses it, only tests - and is documented as unusable
+  wherever the HolyC would have appended.
+- **`check` and duplicates.** `Check.HC` counts every record in `objects=`,
+  but its reachability pass coalesces duplicates (a record whose hash matches
+  a reachable one is reachable) and still prints one `CHECK_DANGLING` line per
+  unreachable record. `check.Run` marks reachability by hash and walks the
+  record list for dangling, which gives the same answers; a unit test now
+  pins that.
 - **Removed HolyC buffer limits.** No `tree_content[2048]` entry cap (so
   `OFFER_SKIP tree_full` can never fire), no `ARCHIVE_SANITY_MAX` or computed
   archive capacity (so `OFFER_REFUSED archive_absurdly_large` can never fire),
@@ -65,6 +83,13 @@ reuse per directory level.
   source fails the offer is refused (`ErrEntityID`) rather than using a weak id.
 - **Redo log.** `OpLogAppend` clears the current path's redo log; the port
   does the same, by draining `meta.TagRedoLog` records for that path.
+
+- **Scenario-comparison finding.** The tests' `normalize` helper masked
+  `ts=\d+` unanchored, so `objec`**`ts=14`** was rewritten too and every
+  `CHECK_OK objects=N` comparison silently passed. Anchored to `\bts=`. That
+  exposed one real, expected mismatch: `TFullMergeRepo.hgs` is saved at the
+  scenario's end, five objects past its `TFULL_CHECK_MERGED` segment, so only
+  that entry's count is masked, explicitly and with a reason.
 
 Tokens the HolyC prints, and what the Go returns instead (`pkg/hgit/...` never
 prints; the CLI task maps these back):
@@ -94,7 +119,7 @@ prints; the CLI task maps these back):
   target (an empty source scores 0 too, identical non-empty inputs 100).
   Cost is O(n*m*min(n,m)) worst case on repetitive content; the Go has no size ceiling and does not
   truncate, so very large files are slow rather than skipped.
-- **Fuzzy-rename buffer ceiling**: the HolyC's caller (Status.HC lines ~172-181, 251) only buffers files of 512 bytes or less for fuzzy rename detection; the offer/status port will mirror that ceiling as a named constant.
+- **Fuzzy-rename buffer ceiling**: the HolyC's caller (Status.HC lines ~172-181, 251) only buffers files of 512 bytes or less for fuzzy rename detection; the status/diff port must mirror that ceiling as a named constant. Narrowed by the 11b entry above: `Offer.HC` has no such ceiling, so `offer` must not either.
 - **Ceilings live in callers, not Fossil.HC**: the HolyC Fossil functions have
   none; Status.HC buffers fuzzy-rename candidates in 512-byte slots and gives a
   larger file content length 0 (similarity 0). The later offer/status ports

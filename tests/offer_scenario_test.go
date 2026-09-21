@@ -1,9 +1,14 @@
 package tests
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/VectorSophie/hgit-native/internal/cli"
+	"github.com/VectorSophie/hgit-native/internal/testfix"
 
 	"github.com/VectorSophie/hgit-native/pkg/hgit/archive"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/check"
@@ -184,10 +189,25 @@ func TestScenarioOfferReplaysRegression(t *testing.T) {
 		}
 	}
 
-	// (3) the produced repo is internally consistent.
+	// (3) the produced repo is internally consistent, and reports the same
+	// `check` tokens - object count included - as the regression's own
+	// post-second-offer check. That count only matches because a record is
+	// appended per offered file, unchanged files included, as ObjectPut does.
 	rep := check.Run(r)
 	if len(rep.HashBad) != 0 || rep.RefsBroken != 0 || len(rep.Dangling) != 0 {
 		t.Fatalf("check report = %+v", rep)
+	}
+	gotCheck := cli.SerialCheck(rep, nil)
+	wantCheck := segment(t, testfix.ExpectedLog(t), "TFULL_CHECK_BEGIN", "TFULL_CHECK_END_MARKER")
+	var wantObjects int
+	if _, err := fmt.Sscanf(wantCheck, "CHECK_OK objects=%d", &wantObjects); err != nil {
+		t.Fatalf("cannot read the expected object count from %q: %v", wantCheck, err)
+	}
+	if rep.Objects != wantObjects {
+		t.Fatalf("objects = %d, want %d - the same records TempleOS wrote", rep.Objects, wantObjects)
+	}
+	if normalize(strings.TrimSpace(gotCheck)) != normalize(wantCheck) {
+		t.Fatalf("check output:\n got:\n%s\nwant:\n%s", gotCheck, wantCheck)
 	}
 }
 

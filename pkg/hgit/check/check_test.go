@@ -151,3 +151,31 @@ func TestNewerFormat(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+// ObjectPut is a plain append, so one hash can occupy several archive
+// positions. Check.HC counts every record in objects= but coalesces
+// duplicates for reachability: a duplicate of a reachable object is
+// reachable, and a duplicate of a dangling one is reported once per record.
+func TestDuplicateRecords(t *testing.T) {
+	r := newRepo(t)
+	b := r.Append(archive.Blob, []byte("b"))
+	if r.Append(archive.Blob, []byte("b")) != b {
+		t.Fatal("same content, same hash")
+	}
+	orphan := r.Append(archive.Blob, []byte("orphan"))
+	r.Append(archive.Blob, []byte("orphan"))
+	c := commit(r, tree(r, b))
+	r.SetHead("main", c)
+
+	rep := Run(r)
+	if rep.Objects != 6 {
+		t.Fatalf("objects = %d, want every record counted (6)", rep.Objects)
+	}
+	want := []DanglingObj{{archive.Blob, orphan}, {archive.Blob, orphan}}
+	if len(rep.Dangling) != len(want) || rep.Dangling[0] != want[0] || rep.Dangling[1] != want[1] {
+		t.Fatalf("dangling = %+v, want both orphan records", rep.Dangling)
+	}
+	if rep.RefsBroken != 0 {
+		t.Fatalf("refs broken = %d", rep.RefsBroken)
+	}
+}

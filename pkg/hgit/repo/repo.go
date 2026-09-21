@@ -125,12 +125,13 @@ func (r *Repo) Head(path string) (archive.Hash, bool) {
 }
 
 // SetHead records h as path's head. Names over 255 bytes cannot be encoded
-// and are ignored; callers validate names (HolyC caps them at 63).
-func (r *Repo) SetHead(path string, h archive.Hash) {
+// and return ErrNameTooLong, leaving the metadata unchanged.
+func (r *Repo) SetHead(path string, h archive.Hash) error {
 	if len(path) > 255 {
-		return
+		return ErrNameTooLong
 	}
 	r.Meta.Set(path, meta.TagHead, h[:])
+	return nil
 }
 
 func (r *Repo) typed(h archive.Hash, t archive.Type) ([]byte, error) {
@@ -210,11 +211,12 @@ type SeeResult struct {
 	Count   int        // top-level entry count
 }
 
-// See ports HgitSee: the commit, then its tree flattened depth-first.
-// ErrNotFound / *NotTypeError for the commit; ErrBrokenChain-free: a missing
-// root tree is reported as ErrTreeNotFound.
+// ErrTreeNotFound is returned by See (with a partial result) when the
+// commit's root tree is absent.
 var ErrTreeNotFound = errors.New("repo: tree not found")
 
+// See ports HgitSee: the commit, then its tree flattened depth-first.
+// The commit lookup fails with ErrNotFound or *NotTypeError.
 func (r *Repo) See(h archive.Hash) (*SeeResult, error) {
 	c, err := r.Commit(h)
 	if err != nil {

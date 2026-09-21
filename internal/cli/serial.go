@@ -28,6 +28,12 @@ func SerialHistory(lines []repo.HistoryLine, err error) string {
 		}
 		return b.String() + fmt.Sprintf("HISTORY_ERR not_a_commit type=%d\n", nt.Got)
 	}
+	if err != nil { // native-only: undecodable commit object
+		for _, l := range lines {
+			fmt.Fprintf(&b, "commit ts=%d msg=%s\n", l.Timestamp, l.Message)
+		}
+		return b.String() + "HISTORY_ERR bad_object\n"
+	}
 	for _, l := range lines {
 		fmt.Fprintf(&b, "commit ts=%d msg=%s\n", l.Timestamp, l.Message)
 	}

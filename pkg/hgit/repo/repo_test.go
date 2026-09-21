@@ -1,8 +1,12 @@
 package repo
 
 import (
+	"errors"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/meta"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/object"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/VectorSophie/hgit-native/internal/testfix"
@@ -29,8 +33,7 @@ func TestOpenHistoryFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("%d commits: %+v", len(h), h)
-	if len(h) < 2 || h[len(h)-1].Message != "first_offer" || h[len(h)-2].Message != "second_offer" {
+	if len(h) != 3 || h[len(h)-1].Message != "first_offer" || h[len(h)-2].Message != "second_offer" {
 		t.Fatalf("history tail wrong: %+v", h)
 	}
 }
@@ -43,7 +46,9 @@ func TestPutSaveOpen(t *testing.T) {
 	if r.Put(archive.Blob, []byte("hello")) != h || len(r.Arc.Records) != n+1 {
 		t.Fatal("Put not idempotent")
 	}
-	r.SetHead("side", h)
+	if err := r.SetHead("side", h); err != nil {
+		t.Fatal(err)
+	}
 	if err := r.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +91,117 @@ func TestMissingMetaAndEmptyHistory(t *testing.T) {
 
 func TestBrokenChain(t *testing.T) {
 	r, _ := Open(copyFixture(t, "TFullRepo.hgs"))
-	r.SetHead("main", archive.Sum([]byte("nope")))
+	_ = r.SetHead("main", archive.Sum([]byte("nope")))
 	if _, err := r.History(); err != ErrBrokenChain {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSetHeadNameTooLong(t *testing.T) {
+	r, _ := Open(copyFixture(t, "TFullRepo.hgs"))
+	before, _ := r.Head("main")
+	err := r.SetHead(strings.Repeat("x", 256), archive.Sum([]byte("z")))
+	if !errors.Is(err, ErrNameTooLong) {
+		t.Fatalf("got %v", err)
+	}
+	if after, _ := r.Head("main"); after != before || len(r.Meta.All(strings.Repeat("x", 256), meta.TagHead)) != 0 {
+		t.Fatal("state changed")
+	}
+	if err := r.SetHead(strings.Repeat("x", 255), archive.Sum([]byte("z"))); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// forge appends a record whose stored hash is chosen by the caller, so a
+// graph with loops can exist (a real hash cannot reference itself).
+func forge(r *Repo, h archive.Hash, ty archive.Type, content []byte) {
+	rec := archive.NewObject(ty, content)
+	rec.Hash = h
+	r.idx[h] = len(r.Arc.Records)
+	r.Arc.Records = append(r.Arc.Records, rec)
+}
+
+func h(s string) archive.Hash { return archive.Sum([]byte(s)) }
+
+func emptyRepo(t *testing.T) *Repo {
+	return &Repo{Path: filepath.Join(t.TempDir(), "r.hgs"), Arc: &archive.Archive{Header: archive.Header{Version: 4}},
+		Meta: &meta.File{}, idx: map[archive.Hash]int{}}
+}
+
+func TestHistoryCycleTerminates(t *testing.T) {
+	r := emptyRepo(t)
+	a, b := h("a"), h("b")
+	forge(r, a, archive.Commit, (&object.Commit{Parents: []archive.Hash{b}, Message: []byte("a")}).Encode())
+	forge(r, b, archive.Commit, (&object.Commit{Parents: []archive.Hash{a}, Message: []byte("b")}).Encode())
+	_ = r.SetHead("main", a)
+	lines, err := r.History()
+	if err != ErrBrokenChain || len(lines) != 2 {
+		t.Fatalf("lines=%d err=%v", len(lines), err)
+	}
+}
+
+func TestSeeCycleTerminates(t *testing.T) {
+	r := emptyRepo(t)
+	ta, tb := h("ta"), h("tb")
+	ent := func(c archive.Hash) []byte {
+		return (&object.Tree{Entries: []object.Entry{{Name: "d", ChildType: archive.Tree, ChildHash: c}}}).Encode()
+	}
+	forge(r, ta, archive.Tree, ent(tb))
+	forge(r, tb, archive.Tree, ent(ta))
+	c := r.Put(archive.Commit, (&object.Commit{Tree: ta, Message: []byte("m")}).Encode())
+	res, err := r.See(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := res.Entries[len(res.Entries)-1]
+	if len(res.Entries) != 3 || !last.Missing {
+		t.Fatalf("entries=%+v", res.Entries)
+	}
+}
+
+func TestOpenErrors(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, b []byte) string {
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, b, 0o644)
+		return p
+	}
+	good := testfix.Read(t, "TFullRepo.hgs")
+	if _, err := Open(write("magic.hgs", append([]byte("XXXX"), good[4:]...))); !errors.Is(err, archive.ErrBadMagic) {
+		t.Fatalf("magic: %v", err)
+	}
+	if _, err := Open(write("trunc.hgs", good[:len(good)-10])); !errors.Is(err, archive.ErrTruncated) {
+		t.Fatalf("trunc: %v", err)
+	}
+	p := write("badm.hgs", good)
+	os.WriteFile(p+".m", []byte{5, 'a'}, 0o644)
+	if _, err := Open(p); !errors.Is(err, meta.ErrMalformed) {
+		t.Fatalf("meta: %v", err)
+	}
+	_, err := Open(write("newer.hgs", testfix.Read(t, "TFConfNewer.hgs")))
+	var uv *archive.UnsupportedVersionError
+	if !errors.As(err, &uv) {
+		t.Fatalf("newer: %v", err)
+	}
+	if _, err := Open(filepath.Join(dir, "absent.hgs")); err == nil {
+		t.Fatal("missing file opened")
+	}
+}
+
+func TestSaveFailureLeavesNoTmp(t *testing.T) {
+	p := copyFixture(t, "TFullRepo.hgs")
+	os.Remove(p + ".m")
+	r, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Mkdir(p+".m", 0o755) // rename of a file onto a directory fails
+	os.WriteFile(filepath.Join(p+".m", "keep"), nil, 0o644)
+	if err := r.Save(); err == nil {
+		t.Fatal("expected failure")
+	}
+	tmps, _ := filepath.Glob(p + "*.tmp")
+	if len(tmps) != 0 {
+		t.Fatalf("temp files left: %v", tmps)
 	}
 }

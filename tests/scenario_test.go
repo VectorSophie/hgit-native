@@ -25,13 +25,13 @@ func segment(t *testing.T, log, begin, end string) string {
 var (
 	reTS   = regexp.MustCompile(`ts=\d+`)
 	reHash = regexp.MustCompile(`\b[0-9a-f]{128}\b`)
-	reEnt  = regexp.MustCompile(`\b[0-9A-F]{16}\b`)
+	reEnt  = regexp.MustCompile(`\b[0-9a-f]{16}\b`)
 )
 
 // normalize masks values that legitimately differ between runs.
 func normalize(s string) string {
 	s = reTS.ReplaceAllString(s, "ts=T")
-	s = reHash.ReplaceAllString(s, "HASH")
+	s = reHash.ReplaceAllString(s, "HASH") // first, so 16-digit ids cannot bite into hashes
 	return reEnt.ReplaceAllString(s, "ENTITY")
 }
 
@@ -82,5 +82,16 @@ func TestScenarioSee(t *testing.T) {
 		if strings.TrimSpace(got) != want { // hashes/ids are deterministic here, compare exactly
 			t.Errorf("%s:\n got:\n%s\nwant:\n%s", c.begin, got, want)
 		}
+	}
+}
+
+func TestSerialHistoryBadObject(t *testing.T) {
+	r := openFixture(t, "TFullRepo.hgs")
+	bad := r.Put(3, []byte{1, 2, 3}) // a commit object that cannot decode
+	_ = r.SetHead("main", bad)
+	lines, err := r.History()
+	got := cli.SerialHistory(lines, err)
+	if got != "HISTORY_ERR bad_object\n" {
+		t.Fatalf("got %q", got)
 	}
 }

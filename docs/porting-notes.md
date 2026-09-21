@@ -21,8 +21,15 @@ Go is written.
   is left to pillar B.
 - **Save is temp+rename, `.hgs` then `.m`,** and syncs `Header.Count`. If a
   Windows rename onto an open file fails, the error is returned, untried.
-- **`SetHead` ignores names over 255 bytes** (signature has no error; HolyC
-  caps path names at 63 at creation).
+- **`SetHead` returns `ErrNameTooLong`** for names over 255 bytes (HolyC caps
+  path names at 63 at creation). `meta.File.Set/Append` still wrap silently on
+  names or payloads over 255 bytes; callers must check first.
+- **`HISTORY_ERR bad_object` is a native-only token**: emitted when a commit
+  object fails to decode (the HolyC has no such state), with no `HISTORY_END`.
+- **`Save` does not fsync** the temp file before renaming. A crash between the
+  two renames can leave a new `.hgs` with an old `.m`; `check` detects it later.
+- **Known limit:** `See`'s nested-tree walk re-walks a shared subtree once per
+  reference, so a deliberately shared-DAG tree can blow up exponentially.
 
 ## 2026-09-21: known before the port starts
 

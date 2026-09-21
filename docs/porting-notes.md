@@ -4,6 +4,29 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-21: ignore and attrs matchers (task 9)
+
+- **`*` never meets `/`**: matching is on the basename (name patterns) so the
+  question does not arise; glob is the HolyC one (`*` = any run, nothing else
+  special).
+- **Dir pattern needs `isDir`** (deviation): the HolyC compared names with no
+  dir/file distinction. `Ignored("build", false)` is false here (a file named
+  `build` is not a directory). A dir pattern also matches any ancestor
+  component, so files under `build/` report ignored (HolyC relied on the caller
+  not descending). `Mode` has no `isDir`, so attrs dir patterns match a
+  same-named file as in the HolyC.
+- **No trimming**: only one trailing `\r` is removed. `*.tmp ` (trailing space)
+  is the literal pattern `*.tmp `. In attrs, `*.png binary ` has token
+  `binary ` (unknown) and the rule is dropped.
+- **Unsupported lines are skipped silently** (slash-containing non-`/`,`/*`
+  patterns, 256+ byte patterns, empty after `!`); the HolyC also printed
+  `IGNORE_UNSUPPORTED_LINE`/`ATTR_UNSUPPORTED*`; packages never print, so the
+  caller-facing diagnostics are not produced here yet.
+- **`Mode` returns rule-derived bits only**; `explicit` means a rule set
+  text/binary. Caller ORs `ModeBinary` when `!explicit && DetectBinary`.
+  Attrs have no negation; `!` is a literal pattern character.
+- Attrs reuse `ignore.ParsePattern`/`Pattern.Match` (exported for that).
+
 ## 2026-09-21: check (task 8)
 
 - **Roots follow Check.HC, not the brief.** Roots are every declared path's

@@ -4,6 +4,37 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-22: fossil delta and similarity (task 11a)
+
+- **Rename threshold**: Offer.HC/Status.HC/Diff.HC accept a candidate when
+  `sim >= FOSSIL_RENAME_SIMILARITY_THRESHOLD` (50), best score wins. Exported
+  as `fossil.RenameSimilarityThreshold`. Regression rename-with-edit
+  (TFOrig -> TFRenamed, "jumps" -> "LEAPS") scores 73 on the 95 visible
+  bytes (the HolyC passes 97 to FileWrite, i.e. the string's NUL plus one
+  byte past it; that gives about 74, above the threshold either way).
+- **Same algorithm, same numbers**: single longest common substring, scan by
+  source offset then target offset, strictly longer wins; min copy length 4;
+  similarity is `best*100/len(target)` with integer division, 0 for an empty
+  target (an empty source scores 0 too, identical non-empty inputs 100).
+  Cost is O(len(source)*len(target)); the Go has no size ceiling and does not
+  truncate, so very large files are slow rather than skipped.
+- **Ceilings live in callers, not Fossil.HC**: the HolyC Fossil functions have
+  none; Status.HC buffers fuzzy-rename candidates in 512-byte slots and gives a
+  larger file content length 0 (similarity 0). The later offer/status ports
+  must decide whether to mirror that; nothing here does.
+- **Empty target (deviation)**: the HolyC maker emits `0\n0:0;`, which its own
+  applier rejects (no segment loop runs, then `:` is read where `;` belongs).
+  Go emits no segment for an empty literal: `0\n0;`, which round-trips.
+  Non-empty deltas are byte-identical to the HolyC.
+- **DeltaApply is stricter than the HolyC**: it errors instead of overrunning
+  when a segment exceeds the declared length, a literal runs past the delta, or
+  a copy leaves the source; integers that overflow int64 and checksums above
+  32 bits are errors (HolyC masked). Declared output is rejected above 256 MiB
+  or above `len(delta)*max(len(source),1)`, so a hostile delta cannot force a
+  large allocation. Bytes after the final `;` are ignored, as in the HolyC.
+- **PutInt of a negative number** returns an empty slice, as the HolyC does;
+  callers pass lengths and offsets only.
+
 ## 2026-09-21: ignore and attrs matchers (task 9)
 
 - **`*` never meets `/`**: matching is on the basename (name patterns) so the

@@ -7,6 +7,7 @@ import (
 
 	"github.com/VectorSophie/hgit-native/internal/testfix"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/archive"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/meta"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/object"
 )
 
@@ -109,5 +110,23 @@ func TestFixtureObjectsRoundTrip(t *testing.T) {
 	}
 	if conflictCount == 0 {
 		t.Fatal("no conflicts decoded")
+	}
+}
+
+func TestFixtureMetaRoundTrip(t *testing.T) {
+	count := 0
+	for _, name := range testfix.Names(t, ".hgs.m") {
+		count++
+		raw := testfix.Read(t, name)
+		f, err := meta.Parse(raw)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !bytes.Equal(f.Marshal(), raw) {
+			t.Fatalf("%s: re-serialised bytes differ", name)
+		}
+	}
+	if count == 0 {
+		t.Fatalf("no .hgs.m fixtures processed")
 	}
 }

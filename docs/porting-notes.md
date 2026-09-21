@@ -4,6 +4,26 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-21: repo, history, see (task 7)
+
+- **Index is a map.** `Repo` indexes records with `map[Hash]int` (first
+  occurrence wins, as the linear scan did); the unwired HolyC hash table is not
+  ported.
+- **History/See return errors, not text.** `ErrNoHead` (HISTORY_EMPTY),
+  `ErrBrokenChain`, `*NotTypeError`; the serial tokens live in
+  `internal/cli/serial.go`. `History` also stops on a parent cycle (reported as
+  broken chain); the HolyC would loop forever. `See` guards nested-tree cycles
+  the same way (reported as missing nested tree).
+- **Entity ids print lowercase hex** (`U64ToHex`), 16 digits.
+- **Final-state fixture.** `TFullRepo.hgs` includes the later `correct` commit,
+  so history has 3 commits; the scenario's 2-commit `TFULL_HISTORY` segment is
+  checked as its tail, and both SEE segments match exactly. Mid-scenario replay
+  is left to pillar B.
+- **Save is temp+rename, `.hgs` then `.m`,** and syncs `Header.Count`. If a
+  Windows rename onto an open file fails, the error is returned, untried.
+- **`SetHead` ignores names over 255 bytes** (signature has no error; HolyC
+  caps path names at 63 at creation).
+
 ## 2026-09-21: known before the port starts
 
 - **Regression coverage gap.** The TempleOS regression scenario

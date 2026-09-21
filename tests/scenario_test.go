@@ -9,6 +9,7 @@ import (
 
 	"github.com/VectorSophie/hgit-native/internal/cli"
 	"github.com/VectorSophie/hgit-native/internal/testfix"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/check"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/repo"
 )
 
@@ -92,6 +93,48 @@ func TestSerialHistoryBadObject(t *testing.T) {
 	lines, err := r.History()
 	got := cli.SerialHistory(lines, err)
 	if got != "HISTORY_ERR bad_object\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func serialCheckFixture(t *testing.T, name string) string {
+	t.Helper()
+	return cli.SerialCheck(check.Run(openFixture(t, name)), nil)
+}
+
+func TestScenarioCheck(t *testing.T) {
+	log := testfix.ExpectedLog(t)
+	for _, c := range []struct{ fixture, begin, end string }{
+		{"TFullExported.hgs", "TFULL_CHECK_EXPORTED_BEGIN", "TFULL_CHECK_EXPORTED_END_MARKER"},
+		{"TFullImported.hgs", "TFULL_CHECK_IMPORTED_BEGIN", "TFULL_CHECK_IMPORTED_END_MARKER"},
+		{"TFullTreeRepo.hgs", "TFULL_CHECK_TREE_BEGIN", "TFULL_CHECK_TREE_END_MARKER"},
+		{"TFullMergeRepo.hgs", "TFULL_CHECK_MERGED_BEGIN", "TFULL_CHECK_MERGED_END_MARKER"},
+		{"TFIgnoreRepo.hgs", "TFULL_IGNORE_CHECK_BEGIN", "TFULL_IGNORE_CHECK_END_MARKER"},
+		{"TFAttrsRepo.hgs", "TFULL_ATTRS_CHECK_BEGIN", "TFULL_ATTRS_CHECK_END_MARKER"},
+		{"TFMergeModeRepo.hgs", "TFULL_MERGEMODE_CHECK_BEGIN", "TFULL_MERGEMODE_CHECK_END_MARKER"},
+	} {
+		got := serialCheckFixture(t, c.fixture)
+		want := segment(t, log, c.begin, c.end)
+		if normalize(strings.TrimSpace(got)) != normalize(want) {
+			t.Errorf("%s vs %s:\n got:\n%s\nwant:\n%s", c.fixture, c.begin, got, want)
+		}
+	}
+}
+
+func TestScenarioCheckNewerFormat(t *testing.T) {
+	_, err := repo.Open(testfix.Path("TFConfNewer.hgs"))
+	got := cli.SerialCheck(check.Report{}, err)
+	want := "CHECK_ERR unsupported_format_version=9 (this build reads up to 4) - written by a newer hgit\n"
+	if got != want || !strings.Contains(testfix.ExpectedLog(t), strings.TrimSpace(want)) {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSerialCheckFailTokens(t *testing.T) {
+	r := openFixture(t, "TFullTreeRepo.hgs")
+	r.Arc.Records[0].Data[len(r.Arc.Records[0].Data)-1] ^= 1
+	got := cli.SerialCheck(check.Run(r), nil)
+	if !strings.HasPrefix(got, "CHECK_FAIL objects=15 ok=14 corrupt=1 format_version=4\n") {
 		t.Fatalf("got %q", got)
 	}
 }

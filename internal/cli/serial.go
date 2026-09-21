@@ -5,8 +5,11 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/VectorSophie/hgit-native/pkg/hgit/archive"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/check"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/repo"
 )
 
@@ -73,4 +76,51 @@ func SerialSee(res *repo.SeeResult, err error) string {
 		}
 	}
 	return b.String() + "SEE_END\n"
+}
+
+// SerialCheck formats a check report as HgitCheck printed it. openErr, if
+// non-nil, is the error from opening the repository (the report is then
+// ignored).
+func SerialCheck(rep check.Report, openErr error) string {
+	var uv *archive.UnsupportedVersionError
+	switch {
+	case errors.As(openErr, &uv):
+		return "CHECK_ERR " + uv.Error() + "\n"
+	case errors.Is(openErr, os.ErrNotExist):
+		return "CHECK_ERR not_a_repository\n"
+	case openErr != nil:
+		return "CHECK_ERR bad_header\n"
+	}
+	var b strings.Builder
+	if uint64(rep.Objects) != rep.HeaderCount {
+		fmt.Fprintf(&b, "CHECK_WARN object_count_mismatch header=%d scanned=%d\n", rep.HeaderCount, rep.Objects)
+	}
+	if len(rep.HashBad) == 0 {
+		fmt.Fprintf(&b, "CHECK_OK objects=%d format_version=%d\n", rep.Objects, rep.FormatVersion)
+	} else {
+		fmt.Fprintf(&b, "CHECK_FAIL objects=%d ok=%d corrupt=%d format_version=%d\n",
+			rep.Objects, rep.Objects-len(rep.HashBad), len(rep.HashBad), rep.FormatVersion)
+	}
+	for _, br := range rep.Broken {
+		fmt.Fprintf(&b, "CHECK_BROKEN_REF %s %s\n", br.Kind, br.Hash.Hex())
+	}
+	if rep.RefsBroken == 0 {
+		b.WriteString("CHECK_REFS_OK\n")
+	} else {
+		fmt.Fprintf(&b, "CHECK_REFS_FAIL broken=%d\n", rep.RefsBroken)
+	}
+	names := map[archive.Type]string{archive.Commit: "commit", archive.Tree: "tree", archive.Attrs: "attrs", archive.Conflict: "conflict"}
+	for _, d := range rep.Dangling {
+		kind := names[d.Type]
+		if kind == "" {
+			kind = "blob"
+		}
+		fmt.Fprintf(&b, "CHECK_DANGLING %s %s\n", kind, d.Hash.Hex())
+	}
+	if len(rep.Dangling) == 0 {
+		b.WriteString("CHECK_DANGLING_NONE\n")
+	} else {
+		fmt.Fprintf(&b, "CHECK_DANGLING_COUNT %d\n", len(rep.Dangling))
+	}
+	return b.String()
 }

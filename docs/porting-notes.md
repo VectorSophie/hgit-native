@@ -4,6 +4,29 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-21: check (task 8)
+
+- **Roots follow Check.HC, not the brief.** Roots are every declared path's
+  HEAD (plus main) and every META_TAG_CONFLICT object of a path with a merge
+  state. The in-progress merge's ours/theirs heads and the resolution hash are
+  not roots in the HolyC (they are HEADs / reachable through the conflict
+  object anyway), so they are not here either.
+- **Report carries extra fields** (`Broken []BrokenRef`, `HeaderCount`) so
+  `CHECK_BROKEN_REF <kind> <hash>`, `CHECK_WARN object_count_mismatch` and
+  `CHECK_FAIL` print exactly. `CHECK_ERR` for a newer format / unreadable file
+  comes from the `repo.Open` error via `SerialCheck(rep, openErr)`.
+- **Native-only tokens:** an undecodable commit or tree object is reported as
+  `commit_malformed` / `tree_malformed` broken refs (HolyC read garbage).
+- **Reachability is by hash with an explicit stack**, so duplicate records of
+  one hash are all reachable (HolyC's coalescing pass) and a forged cyclic
+  graph terminates.
+- **Scenario check:** all seven final-state fixtures (exported, imported, tree,
+  merged, ignore, attrs, mergemode) matched their expected.log segments
+  exactly, so no mid-scenario mismatch was found. CHECK_BEFORE/AFTER_UNDO, the
+  conflict-merge and HARDEN broken-ref segments need mid-scenario state and
+  are left to the replay task; the conflict-root and missing-conflict cases
+  are covered by in-memory unit tests.
+
 ## 2026-09-21: repo, history, see (task 7)
 
 - **Index is a map.** `Repo` indexes records with `map[Hash]int` (first

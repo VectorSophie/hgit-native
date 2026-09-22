@@ -141,3 +141,61 @@ func (e OpLogEntry) Encode() []byte {
 	out = append(out, e.Prev[:]...)
 	return append(out, e.New[:]...)
 }
+
+// MergeState is the payload of a MERGE_STATE record: the two heads a merge
+// was started from, then the other path's name. The base is deliberately not
+// stored - it is re-derivable from the two heads, since the object graph only
+// ever grows (MetaMergeStateWrite).
+type MergeState struct {
+	Ours, Theirs archive.Hash
+	OtherPath    string
+}
+
+func DecodeMergeState(p []byte) (MergeState, error) {
+	var s MergeState
+	if len(p) < 2*archive.HashLen {
+		return s, ErrMalformed
+	}
+	copy(s.Ours[:], p)
+	copy(s.Theirs[:], p[archive.HashLen:])
+	s.OtherPath = string(p[2*archive.HashLen:])
+	return s, nil
+}
+
+func (s MergeState) Encode() []byte {
+	out := make([]byte, 0, 2*archive.HashLen+len(s.OtherPath))
+	out = append(out, s.Ours[:]...)
+	out = append(out, s.Theirs[:]...)
+	return append(out, s.OtherPath...)
+}
+
+// ConflictRecord is the payload of a CONFLICT record: the OBJ_CONFLICT
+// object's hash, whether it has been resolved, and what it resolved to (all
+// zero while unresolved, and also once resolved to "absent").
+type ConflictRecord struct {
+	Conflict   archive.Hash
+	Resolved   bool
+	Resolution archive.Hash
+}
+
+func DecodeConflictRecord(p []byte) (ConflictRecord, error) {
+	var c ConflictRecord
+	if len(p) != 2*archive.HashLen+1 {
+		return c, ErrMalformed
+	}
+	copy(c.Conflict[:], p)
+	c.Resolved = p[archive.HashLen] != 0
+	copy(c.Resolution[:], p[archive.HashLen+1:])
+	return c, nil
+}
+
+func (c ConflictRecord) Encode() []byte {
+	out := make([]byte, 0, 2*archive.HashLen+1)
+	out = append(out, c.Conflict[:]...)
+	var resolved byte
+	if c.Resolved {
+		resolved = 1
+	}
+	out = append(out, resolved)
+	return append(out, c.Resolution[:]...)
+}

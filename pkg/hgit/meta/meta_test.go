@@ -62,3 +62,31 @@ func TestOpLogEntry(t *testing.T) {
 		t.Fatal("short payload must fail")
 	}
 }
+
+func TestMergeStateAndConflictRecordRoundTrip(t *testing.T) {
+	s := MergeState{Ours: archive.Sum([]byte("o")), Theirs: archive.Sum([]byte("t")), OtherPath: "feat"}
+	enc := s.Encode()
+	if len(enc) != 132 { // 64 + 64 + len("feat")
+		t.Fatalf("len=%d", len(enc))
+	}
+	back, err := DecodeMergeState(enc)
+	if err != nil || back != s {
+		t.Fatalf("round trip: %v %+v", err, back)
+	}
+	if _, err := DecodeMergeState(enc[:100]); !errors.Is(err, ErrMalformed) {
+		t.Fatal("short payload must fail")
+	}
+
+	c := ConflictRecord{Conflict: archive.Sum([]byte("c")), Resolved: true, Resolution: archive.Sum([]byte("r"))}
+	cenc := c.Encode()
+	if len(cenc) != 129 {
+		t.Fatalf("len=%d", len(cenc))
+	}
+	cback, err := DecodeConflictRecord(cenc)
+	if err != nil || cback != c {
+		t.Fatalf("round trip: %v %+v", err, cback)
+	}
+	if _, err := DecodeConflictRecord(cenc[:128]); !errors.Is(err, ErrMalformed) {
+		t.Fatal("short payload must fail")
+	}
+}

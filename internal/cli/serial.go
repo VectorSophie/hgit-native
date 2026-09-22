@@ -10,6 +10,7 @@ import (
 
 	"github.com/VectorSophie/hgit-native/pkg/hgit/archive"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/check"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/merge"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/meta"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/repo"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/status"
@@ -293,4 +294,49 @@ func SerialCopyRepo(cmd string, err error) string {
 		return fmt.Sprintf("DISPATCH_ERR %s_failed\n", cmd)
 	}
 	return fmt.Sprintf("DISPATCH_OK %s\n", cmd)
+}
+
+// SerialMerge formats a merge attempt as HgitMerge printed it. The
+// MERGE_AUTO notices come first, as they do there (printed during the walk),
+// then either MERGE_OK or the conflict report.
+func SerialMerge(otherPath string, res merge.Result, err error) string {
+	switch {
+	case errors.Is(err, merge.ErrInProgress):
+		return "MERGE_ERR conflicts_already_in_progress - resolve them ('hgit conflicts'/'hgit resolve') then 'hgit merge continue', or 'hgit merge abort' first\n"
+	case errors.Is(err, repo.ErrNoHead):
+		return "MERGE_ERR no_head_on_current_path\n"
+	case errors.Is(err, repo.ErrNoSuchPath):
+		return fmt.Sprintf("MERGE_ERR other_path_not_found %s\n", otherPath)
+	case errors.Is(err, merge.ErrNoCommonAncestor):
+		return "MERGE_ERR no_common_ancestor\n"
+	case errors.Is(err, merge.ErrTreeNotFound):
+		return "MERGE_ERR tree_not_found\n"
+	case errors.Is(err, merge.ErrNestedTree):
+		// Native-only: the recursive merge is not ported yet.
+		return "MERGE_ERR nested_tree\n"
+	case err != nil: // native-only: a malformed object or a failed save
+		return "MERGE_ERR bad_object\n"
+	case res.UpToDate:
+		return "MERGE_ALREADY_UP_TO_DATE\n"
+	case res.FastForward:
+		return "MERGE_FASTFORWARD\n"
+	}
+	var b strings.Builder
+	for _, a := range res.Autos {
+		switch a.Kind {
+		case merge.AutoTookTheirs:
+			fmt.Fprintf(&b, "MERGE_AUTO took-theirs %s\n", a.Path)
+		case merge.AutoDeleted:
+			fmt.Fprintf(&b, "MERGE_AUTO deleted %s\n", a.Path)
+		}
+	}
+	if len(res.Conflicts) == 0 {
+		return b.String() + "MERGE_OK\n"
+	}
+	for _, c := range res.Conflicts {
+		fmt.Fprintf(&b, "MERGE_CONFLICT %s\n", c.Object.Path)
+	}
+	fmt.Fprintf(&b, "MERGE_ABORTED conflicts=%d\n", len(res.Conflicts))
+	b.WriteString("MERGE_CONFLICTS_PERSISTED - see 'hgit conflicts', 'hgit resolve', 'hgit merge continue'/'hgit merge abort'\n")
+	return b.String()
 }

@@ -4,6 +4,78 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-22: flat three-way merge (task 14b)
+
+Ports `Merge.HC`'s `HgitMerge` - the trivial cases, the flat three-way merge
+of content and of mode, and ADR 0016 conflict persistence - into
+`pkg/hgit/merge`: `Merge(r *repo.Repo, otherPath string) (Result, error)`.
+"Ours" is the current path, read from the repository, exactly as `HgitMerge`
+does, so there is no `oursPath` argument. Not ported here: recursion into
+nested trees (`MergeTreesRecursive`'s tree branch), rename normalization
+(`MergeNormalizeSide`), and the lifecycle commands (`conflicts`, `resolve`,
+`merge continue`, `merge abort`), all later sub-pieces.
+
+- **Ported exactly**: the decision table (identical or both absent -> ours;
+  unchanged on theirs -> ours; unchanged on ours -> theirs; otherwise a
+  conflict), with an absent entry treated as a value like any other. That is
+  what makes **edit-vs-delete a real content conflict** (the deleting side is
+  recorded `present=false` in the `OBJ_CONFLICT` evidence), delete-vs-
+  unchanged a clean deletion, delete-on-both a clean deletion, and
+  **add-vs-add with different content a real conflict** (reachable at the flat
+  level: the base is simply absent on all three sides' evidence).
+- **Mode is a separate three-way decision**, made for every surviving entity
+  regardless of the content branch, and `Conflict.Kind` is a bitmask, so one
+  entity can carry `KindContent|KindMode` at once - as in the HolyC.
+- **Documented HolyC limitation, ported and pinned by a test, not fixed**: a
+  mode-only change on the side a file is DELETED from is not flagged. The
+  content decision alone decides the delete, and the deleting side contributes
+  mode 0, so ours==base on mode and "theirs" wins a mode nothing will use.
+  `TestModeChangeOnTheDeletedSideIsNotAConflict` asserts exactly that,
+  deliberately. (The narrower corner where three distinct modes meet - base
+  non-zero, one side deleting, the other setting a third mode - does still
+  raise a mode conflict on a deleted entry, because the HolyC's mode
+  comparison runs unconditionally; that too is ported verbatim.)
+- **Kind mismatch (`OBJ_TREE` on one side, `OBJ_BLOB` on another)**: ported as
+  the real `KindType` conflict, with mode 0 on every side, as `Merge.HC` does.
+  Finding: a flat offer never writes `OBJ_TREE` entries, so this branch is
+  unreachable through the flat commands alone; it becomes reachable only once
+  `offertree` commits are merged, which is why it is ported now rather than
+  deferred.
+- **Deviation: a subtree that every side agrees is a tree is refused**
+  (`ErrNestedTree`, `MERGE_ERR nested_tree`) instead of being recursed into.
+  The HolyC recurses; this port does not implement that yet and refuses rather
+  than merging a tree by its hash alone, which would silently drop one side's
+  nested edits. Native-only output with no HolyC counterpart; it disappears
+  when the recursive merge lands.
+- **Deviation: typed errors instead of printed tokens.** `pkg/hgit` never
+  prints, so every `MERGE_*` token lives in `cli.SerialMerge`, and the
+  `MERGE_AUTO took-theirs`/`deleted` notices the HolyC prints mid-walk are
+  returned as `Result.Autos` (taking ours is silent there, so it has no
+  `Auto` here). `MERGE_ERR bad_header`/`not_a_repository` belong to opening
+  the archive, which the caller does, as with `check`.
+- **Conflict persistence**: on any conflict no merge commit is created and
+  HEAD does not move, but every `OBJ_CONFLICT` object is appended (via
+  `Append`, matching `ObjectPut`'s unconditional semantics and therefore the
+  object counts TempleOS wrote), `META_TAG_MERGE_STATE` is written (ours +
+  theirs + other path name; the base is deliberately not stored, being
+  re-derivable) and one unresolved `META_TAG_CONFLICT` record per conflict is
+  appended, then the repository is saved. `meta.MergeState` and
+  `meta.ConflictRecord` carry those two payload shapes.
+- **`Repo.AppendOp` fits both the merge commit and the fast-forward**:
+  `OpLogAppend` is `MetaOpLogAppend` + `MetaRedoLogClear` on the current path,
+  which is precisely what `AppendOp` does, so it is reused unchanged.
+- **Fixture segments reproduced exactly**: `TFULL_MERGE`, `TFULL_CHECK_MERGED`
+  (18 objects), `TFULL_MERGE_FF`, `TFULL_MERGEMODE_MERGE`,
+  `TFULL_MERGEMODE_CHECK` (16 objects), replayed natively in
+  `tests/merge_scenario_test.go`. `TFULL_CONFLICT_MERGE` and
+  `TFULL_CONFLICT_ABORT` are deferred: they drive `conflicts`, `resolve`,
+  `merge continue` and `merge abort`, and the first also exercises the
+  rename-aware merge - none of which exist yet.
+- **Finding worth recording**: the merge repository's fixture shows an
+  `OBJ_ATTRS` object per offer, because the regression's `FileWrite` lengths
+  are one byte past each literal, so those files end in a NUL and are binary
+  by detection. Replaying with the literal alone produces 14 objects, not 18.
+
 ## 2026-09-22: merge-base (task 14a)
 
 Ports `MergeBase.HC` (the FIXED, post-probe-109 version) into

@@ -113,7 +113,7 @@ func (w *treeWalker) walk(relDir string, old *object.Tree, depth int) ([]Change,
 		case w.ign.IgnoredLast(rel):
 			// ADR 0014: not tracked, and ignored - never reported as NEW.
 		default:
-			news = append(news, newCand{name: rel, hash: hash, content: content})
+			news = append(news, newCand{name: rel, hash: hash, content: fuzzyTarget(content)})
 		}
 	}
 

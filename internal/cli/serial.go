@@ -134,6 +134,46 @@ func SerialStatus(changes []status.Change, err error) string { return serialStat
 // functions share both.
 func SerialStatusTree(changes []status.Change, err error) string { return serialStatus(changes, err) }
 
+// SerialDiff formats Diff's result as HgitDiff printed it. The three
+// DIFF_ERR cases are HgitDiff's own; "not_a_repository"/"bad_header" belong
+// to opening the archive, which the caller does (SerialCheck's own openErr
+// pattern), so they are not produced here.
+func SerialDiff(changes []status.Change, err error) string {
+	var nt *repo.NotTypeError
+	switch {
+	case errors.Is(err, repo.ErrNotFound):
+		return "DIFF_ERR commit_not_found\n"
+	case errors.As(err, &nt):
+		return fmt.Sprintf("DIFF_ERR not_a_commit type=%d\n", nt.Got)
+	case errors.Is(err, repo.ErrTreeNotFound):
+		return "DIFF_ERR tree_not_found\n"
+	case errors.Is(err, status.ErrTooDeep):
+		// Native-only: the HolyC's own recursion has no depth guard.
+		return "DIFF_ERR too_deep\n"
+	case err != nil: // native-only: an undecodable commit object
+		return "DIFF_ERR bad_object\n"
+	}
+	var b strings.Builder
+	for _, c := range changes {
+		switch c.Kind {
+		case status.Modified:
+			fmt.Fprintf(&b, "DIFF_MODIFIED %s\n", c.Path)
+		case status.Renamed:
+			fmt.Fprintf(&b, "DIFF_RENAMED %s -> %s\n", c.OldPath, c.Path)
+		case status.New:
+			fmt.Fprintf(&b, "DIFF_NEW %s\n", c.Path)
+		case status.Deleted:
+			fmt.Fprintf(&b, "DIFF_DELETED %s\n", c.Path)
+		case status.ModeChanged:
+			fmt.Fprintf(&b, "DIFF_MODE_CHANGED %s %d -> %d\n", c.Path, c.OldMode, c.NewMode)
+		case status.TypeChanged:
+			fmt.Fprintf(&b, "DIFF_TYPE_CHANGED %s\n", c.Path)
+		}
+	}
+	b.WriteString("DIFF_END\n")
+	return b.String()
+}
+
 func serialStatus(changes []status.Change, err error) string {
 	var noOff *status.NoOfferingsYetError
 	switch {

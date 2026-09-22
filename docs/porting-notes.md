@@ -4,6 +4,63 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-22: `diff` (task 12b)
+
+Ports `Diff.HC` (`DiffResolveTreeByHash`, `DiffPrintTreeChanges`, `HgitDiff`):
+one commit's tree against its first parent's, with the serial tokens in
+`internal/cli/serial.go`'s `SerialDiff`.
+
+- **It lives in `pkg/hgit/status` as `diff.go`, not a `pkg/hgit/diff`
+  package.** `Diff.HC` is Status.HC's committed-trees counterpart down to the
+  rename passes, and the port reuses `Change`, `newCand`/`delCand`,
+  `matchRenames` and `find` unchanged. A separate package would have meant
+  exporting all of that, or duplicating the two rename passes; neither buys
+  anything. The entry point is `status.Diff(r, commit) ([]Change, error)`.
+- **No 512-byte fuzzy-rename ceiling in `diff`, unlike `status`.**
+  `Diff.HC`'s rename pass 2 resolves BOTH sides through `IndexLookup` +
+  `rbuf` on demand and passes the full record length to
+  `FossilSimilarityPercent`; there is no fixed-size buffer anywhere in the
+  file, and its header says so explicitly ("no need to buffer full file
+  content ahead of time the way `Status.HC`'s NEW-on-disk candidates
+  require"). `MaxFuzzyRenameBytes` is therefore Status/StatusTree's alone.
+  Pinned by `TestDiffFuzzyRenameHasNoSizeCeiling` (a 1760-byte pair that
+  `status` would not have buffered still comes back RENAMED). The refactor
+  that made this possible moves `fuzzyTarget` from inside `matchRenames` to
+  the two Status/StatusTree call sites that buffer a candidate - behaviour
+  for `status` is unchanged, and its own 511/512/513 tests still pass.
+- **A broken nested tree reference is not an error and does not abort.**
+  `DiffResolveTreeByHash` returns FALSE and `DiffPrintTreeChanges` recurses
+  with that side NULL, i.e. as an empty tree, so the other side's entries are
+  reported NEW/DELETED and the rest of the diff continues; broken references
+  stay `check`'s job. `differ.tree` mirrors this (nil on missing, malformed
+  or wrong-typed), tested by
+  `TestDiffBrokenNestedTreeReferenceIsAnEmptyTree`. Only the COMMIT's own
+  root tree is an error (`DIFF_ERR tree_not_found`), as in `HgitDiff`.
+- **Deviation: `DIFF_ERR too_deep` and a `MaxTreeDepth` guard on the
+  recursion.** `DiffPrintTreeChanges` has no depth limit at all. Tree hashes
+  are content-addressed, so a cycle cannot arise from anything this port
+  writes, but a hand-corrupted archive can name any hash it likes and
+  TempleOS would recurse until it died. The guard is the same one
+  `StatusTree`/`OfferTree` already use, and the token is native-only, in the
+  same class as `SerialStatus`'s own `STATUS_ERR bad_object`.
+- **Deviation: names are never truncated.** `DiffPrintTreeChanges` builds
+  each path in a 256-byte buffer and clamps it at 254; Go paths are strings
+  and are printed whole. Reaching the clamp needs a path over 254 bytes,
+  which nothing in the fixtures or this port produces.
+- **Deviation: a root tree that resolves but is not a tree object.**
+  `HgitDiff` only does an `IndexLookup` and then reads the bytes as a tree;
+  the Go port reports `DIFF_ERR tree_not_found` rather than decoding whatever
+  happened to be there. Same for a parent commit whose record is not a commit
+  (treated as "no old tree", so everything reads as new).
+- **Fixture parity: `TFULL_DIFF` and `TFULL_ATTRS_DIFF` match byte for byte**
+  (`tests/diff_scenario_test.go`, with only `normalize`'s masking).
+  **`TFULL_MERGEMODE_DIFF` is deferred**: it diffs a real merge commit
+  produced by `hgit merge`, and no merge command exists in this port yet. It
+  is not faked - the merge-commit behaviour itself (first parent only, probe
+  111) is covered by `TestDiffMergeCommitUsesFirstParentOnly`, which builds a
+  genuine two-parent commit object directly; the segment should be replayed
+  for real by whichever task ports merge.
+
 ## 2026-09-22: `status` and `statustree` (task 12a)
 
 Ports `Status.HC`'s `HgitStatus` (flat) and `StatusTreeWalk`/`HgitStatusTree`

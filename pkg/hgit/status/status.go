@@ -2,9 +2,9 @@
 // of Status.HC's flat HgitStatus. It never prints; the exact serial tokens
 // live in internal/cli/serial.go's SerialStatus.
 //
-// Change is shared with the (not yet ported) diff command - Diff.HC uses the
-// same UNCHANGED/MODIFIED/RENAMED/NEW/DELETED/MODE_CHANGED vocabulary and the
-// same rename-detection rules.
+// Change is shared with the diff command (diff.go, the port of Diff.HC),
+// which uses the same UNCHANGED/MODIFIED/RENAMED/NEW/DELETED/MODE_CHANGED
+// vocabulary and the same rename-detection rules over two committed trees.
 package status
 
 import (
@@ -124,7 +124,7 @@ func Status(r *repo.Repo, work, mask string) ([]Change, error) {
 			if ign.IgnoredLast(f.Name) {
 				continue
 			}
-			news = append(news, newCand{name: f.Name, hash: hash, content: content})
+			news = append(news, newCand{name: f.Name, hash: hash, content: fuzzyTarget(content)})
 			continue
 		}
 
@@ -165,8 +165,10 @@ func Status(r *repo.Repo, work, mask string) ([]Change, error) {
 	return changes, nil
 }
 
-// newCand is a not-yet-classified on-disk file: a possible NEW, or a rename
-// target.
+// newCand is a not-yet-classified candidate for the NEW side: an on-disk
+// file for Status/StatusTree, a new tree entry for Diff. content is what the
+// fuzzy pass compares - nil for a candidate that has none to compare (see
+// fuzzyTarget), which can never reach the threshold.
 type newCand struct {
 	name    string
 	hash    archive.Hash
@@ -184,7 +186,9 @@ type delCand struct {
 
 // fuzzyTarget returns content's fuzzy-match candidate, or nil (never matches,
 // per fossil.SimilarityPercent) when it is too large to have been buffered -
-// see MaxFuzzyRenameBytes.
+// see MaxFuzzyRenameBytes. Applied by Status/StatusTree when they buffer a
+// candidate, exactly where Status.HC's own buffer size decides it; Diff has
+// no such ceiling and stores full content instead (diff.go).
 func fuzzyTarget(content []byte) []byte {
 	if len(content) > MaxFuzzyRenameBytes-1 {
 		return nil
@@ -225,7 +229,7 @@ func matchRenames(r *repo.Repo, dels []delCand, news []newCand) []Change {
 			if news[j].matched {
 				continue
 			}
-			if sim := fossil.SimilarityPercent(source, fuzzyTarget(news[j].content)); sim > bestSim {
+			if sim := fossil.SimilarityPercent(source, news[j].content); sim > bestSim {
 				bestSim, bestJ = sim, j
 			}
 		}

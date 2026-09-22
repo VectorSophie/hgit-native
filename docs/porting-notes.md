@@ -4,6 +4,118 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-22: `status` and `statustree` (task 12a)
+
+Ports `Status.HC`'s `HgitStatus` (flat) and `StatusTreeWalk`/`HgitStatusTree`
+(recursive, ADR 0010) into `pkg/hgit/status`, with the exact serial tokens in
+`internal/cli/serial.go`'s `SerialStatus`/`SerialStatusTree`. `diff`
+(Diff.HC) is a later task; the `Change` type here is shaped for it to reuse.
+
+- **Byte-exact parity with three of the fixture's segments.**
+  `tests/status_scenario_test.go` replays the regression natively up to
+  `TFULL_STATUS`, `TFULL_STATUSTREE` and `TFULL_ATTRS_STATUS` and compares the
+  formatted output against `contract/fixtures/expected.log` with only
+  `normalize`'s hash/entity/timestamp masking - no other slack. `TFULL_STATUS`
+  exercises every classification at once (UNCHANGED, MODIFIED, a fuzzy RENAME
+  with an edit, NEW, DELETED); `TFULL_STATUSTREE` proves statustree never
+  prints STATUS_UNCHANGED; `TFULL_ATTRS_STATUS` proves STATUS_MODE_CHANGED
+  fires independently of an unchanged content line. The `TFULL_STATUSTREE`
+  segment carries a trailing `DISPATCH_OK statustree` line that belongs to the
+  (not-yet-built) CLI dispatcher, not to `HgitStatusTree` itself, so the test
+  strips it before comparing.
+- **The ADR 0016 merge-in-progress check (`STATUS_MERGE_IN_PROGRESS`) is
+  deliberately not ported here.** `Status.HC` prints it from
+  `MetaMergeStateExists`/`MetaConflictCount`/`MetaConflictGetAt`, but this
+  codebase has no writer for the per-conflict "resolved" flag those read
+  (`meta.TagConflict`'s payload today is just a hash - see
+  `pkg/hgit/check/check.go`'s own reader). Guessing that on-disk shape here,
+  ahead of the merge task that actually defines it, would risk a format this
+  port would then have to keep. `TFULL_CONFLICT_ABORT`'s status line (the only
+  fixture segment that exercises this) is deferred to whichever task builds
+  merge/resolve.
+- **`MaxFuzzyRenameBytes = 512`, matching Status.HC's fixed 512-byte
+  fuzzy-rename slot exactly.** A NEW-on-disk candidate is eligible for the
+  fuzzy-rename pass only when its own content is at most 511 bytes
+  (`fsize+1 <= 512`, the `+1` being the OBJ_BLOB type tag); at exactly 512
+  bytes it is already over the line. Tested at 511/512/513
+  (`TestFuzzyRenameSizeCeiling`). This ceiling is asymmetric: the DELETED
+  side's content, read straight from the archive, has no such cap - only the
+  disk-side candidate's buffer is size-limited, exactly as the HolyC's
+  `new_contents[disk_count*512+512]` slot array only exists for that side.
+  `pkg/hgit/offer`'s own fuzzy rename has no ceiling at all (probe 84's own
+  finding, already documented there) - this is a real, deliberate parity
+  choice with status/diff alone, not a general project rule.
+- **Pass 2 (DELETED) walks the whole HEAD tree, not just what the mask
+  matched.** `Status.HC`'s deletion pass iterates every entry of
+  `tree_content` unconditionally, checking existence under `dir_prefix` -
+  `find_mask` only gates pass 1 (NEW/MODIFIED/UNCHANGED). Ported as-is: `mask`
+  narrows what `Status` classifies as NEW/MODIFIED/UNCHANGED, but every
+  HEAD-tracked name gets checked for deletion regardless of the mask.
+- **`statustree` never reports STATUS_UNCHANGED**, unlike flat `status` -
+  `StatusTreeWalk`'s blob branch only ever calls `CommPrint` for
+  `STATUS_MODIFIED`; an unchanged file at any nesting level produces nothing.
+  Mode is still checked and reported independently either way.
+- **A tracked name whose kind flips (file<->directory) can print BOTH
+  STATUS_TYPE_CHANGED and STATUS_DELETED for the same path**, ported exactly
+  as found, not smoothed over: `StatusTreeWalk`'s forward pass reports
+  TYPE_CHANGED from the disk-side walk, but its separate deletion pass only
+  special-cases an old TREE-typed entry (checking whether the directory still
+  exists) - an old BLOB-typed entry whose name is now a real directory (or
+  vice versa) still gets a plain `HgitFileRead`/`workdir.Read` attempt in the
+  deletion pass, which fails, so the same name is also reported DELETED. Both
+  lines are genuine `Status.HC` output for this case (verified against the
+  source, not assumed), covered by `TestStatusTreeTypeChanged`.
+- **One resolved deviation from that same quirk's mirror image**: `Status.HC`
+  decides whether an old TREE-typed entry's directory "still exists" with
+  `FilesFind("<check_path>*", 0) != NULL`, a glob that also matches a plain
+  FILE now sitting at that exact name (zero extra characters satisfies the
+  trailing `*`) - a false positive that would suppress the deletion recursion
+  a directory-to-file type change should otherwise trigger. This port uses
+  `os.Stat` + `IsDir` instead, which does not share that false positive. This
+  is a genuine, narrow behavioural difference (only reachable for a tracked
+  directory replaced by a same-named file, not exercised by any fixture
+  segment); the corrected check was chosen deliberately rather than
+  reproducing an incidental glob-matching artifact of `FilesFind`'s API.
+- **The `ignore.Rules.Ignored(path, isDir)` method and the ancestor-directory
+  branch of `Pattern.Match` are deleted, as dead code.** `Status.HC` calls
+  `IsIgnored(name, rel_dir)` - the same shape `IgnoredLast` already is - in
+  both the flat and the tree walk, exactly like both `Offer.HC` paths;
+  nothing in this codebase, offer or status, ever calls the `Match`-based,
+  isDir-aware form. `Match` itself is kept (only its `KindDir` case is
+  removed) because `MatchLast` still calls it for `KindName`/`KindDirContents`.
+  `pkg/hgit/ignore/ignore_test.go`'s table-driven test was rewritten against
+  `IgnoredLast` instead of the deleted method, and a duplicated `{"build",
+  true}` case in `TestIgnoredLast` was collapsed into one.
+- **`STATUS_NO_OFFERINGS_YET` / `STATUS_ERR no_head_but_objects_exist`** are
+  carried as data (`*status.NoOfferingsYetError`, `status.ErrNoHead`) rather
+  than printed directly, matching how `pkg/hgit/status` never touches the
+  terminal; `SerialStatus`/`SerialStatusTree` format them. Neither is
+  exercised by a fixture segment (the regression never runs `status` against
+  an empty or headless repo), so they are unit-tested only
+  (`TestStatusEmptyRepoNoOfferingsYet`, `TestStatusTreeEmptyRepoNoOfferingsYet`).
+  The `not_a_repository`/`bad_header`/`unsupported_format_version` tokens
+  `Status.HC` prints before any of this are the caller's concern (they happen
+  at `repo.Open` time, before a `*repo.Repo` exists to pass in), the same
+  split `check`'s own `SerialCheck(rep, openErr)` already uses.
+- **Small carry-overs done alongside this task** (per the review that found
+  them): an offer-level test proving a flat `Offer` hides a plain FILE named
+  `build` against a `build/` `.hgitignore` rule, the same way a real directory
+  of that name is hidden (`TestFlatOfferIgnoresPlainFileMatchingDirPattern`);
+  four `offertree` tests for previously-untested branches - a tracked file
+  becoming a directory (fresh identity, not carried - `buildTree` only carries
+  a directory node's id forward when the OLD entry of that name was itself a
+  tree), the reverse direction (a tracked directory becoming a file DOES carry
+  its identity forward, since that goes through `addFile`'s name-first
+  `CarryEntityID`), a directory deleted down to nothing and later re-created
+  under the same name (fresh identity - once a directory has nothing left
+  inside it, its own tree entry is dropped, so there is no name to match
+  against later), and an old subtree whose hash the archive cannot resolve
+  (its entity id still carries forward, read off the old entry directly,
+  never off the unresolvable subtree); `offer.Offer`/`offer.OfferTree` now
+  document that an error returned after any object has been appended leaves
+  the caller's `*repo.Repo` mutated and must not be reused; the duplicate
+  `{"build", true}` case in `ignore_test.go` is gone (see above).
+
 ## 2026-09-22: the recursive offertree and the relation wrappers (task 11c)
 
 Ports `Offer.HC`'s `TreeBuildRecursive`, `HgitOfferTreeWithRelation` and

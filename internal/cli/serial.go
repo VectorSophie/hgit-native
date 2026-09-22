@@ -11,6 +11,7 @@ import (
 	"github.com/VectorSophie/hgit-native/pkg/hgit/archive"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/check"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/repo"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/status"
 )
 
 // SerialHistory formats History()'s result as HgitHistory printed it.
@@ -122,5 +123,51 @@ func SerialCheck(rep check.Report, openErr error) string {
 	} else {
 		fmt.Fprintf(&b, "CHECK_DANGLING_COUNT %d\n", len(rep.Dangling))
 	}
+	return b.String()
+}
+
+// SerialStatus formats Status's result as HgitStatus printed it.
+func SerialStatus(changes []status.Change, err error) string { return serialStatus(changes, err) }
+
+// SerialStatusTree formats StatusTree's result as HgitStatusTree printed it -
+// the same tokens and the same STATUS_END, since the HolyC's own two
+// functions share both.
+func SerialStatusTree(changes []status.Change, err error) string { return serialStatus(changes, err) }
+
+func serialStatus(changes []status.Change, err error) string {
+	var noOff *status.NoOfferingsYetError
+	switch {
+	case errors.As(err, &noOff):
+		var b strings.Builder
+		b.WriteString("STATUS_NO_OFFERINGS_YET\n")
+		for _, e := range noOff.Listing {
+			fmt.Fprintf(&b, "%s  %d\n", e.Name, e.Size)
+		}
+		return b.String()
+	case errors.Is(err, status.ErrNoHead):
+		return "STATUS_ERR no_head_but_objects_exist\n"
+	case err != nil: // native-only: an error Status.HC's own preamble never reaches
+		return "STATUS_ERR bad_object\n"
+	}
+	var b strings.Builder
+	for _, c := range changes {
+		switch c.Kind {
+		case status.Unchanged:
+			fmt.Fprintf(&b, "STATUS_UNCHANGED %s\n", c.Path)
+		case status.Modified:
+			fmt.Fprintf(&b, "STATUS_MODIFIED %s\n", c.Path)
+		case status.Renamed:
+			fmt.Fprintf(&b, "STATUS_RENAMED %s -> %s\n", c.OldPath, c.Path)
+		case status.New:
+			fmt.Fprintf(&b, "STATUS_NEW %s\n", c.Path)
+		case status.Deleted:
+			fmt.Fprintf(&b, "STATUS_DELETED %s\n", c.Path)
+		case status.ModeChanged:
+			fmt.Fprintf(&b, "STATUS_MODE_CHANGED %s %d -> %d\n", c.Path, c.OldMode, c.NewMode)
+		case status.TypeChanged:
+			fmt.Fprintf(&b, "STATUS_TYPE_CHANGED %s\n", c.Path)
+		}
+	}
+	b.WriteString("STATUS_END\n")
 	return b.String()
 }

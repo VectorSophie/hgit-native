@@ -178,6 +178,14 @@ func (r *Repo) Tree(h archive.Hash) (*object.Tree, error) {
 	return object.DecodeTree(b)
 }
 
+func (r *Repo) Attrs(h archive.Hash) (*object.Attrs, error) {
+	b, err := r.typed(h, archive.Attrs)
+	if err != nil {
+		return nil, err
+	}
+	return object.DecodeAttrs(b)
+}
+
 type HistoryLine struct {
 	Timestamp uint64
 	Message   string

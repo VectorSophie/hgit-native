@@ -9,7 +9,6 @@ import (
 	"github.com/VectorSophie/hgit-native/pkg/hgit/check"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/merge"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/meta"
-	"github.com/VectorSophie/hgit-native/pkg/hgit/repo"
 )
 
 // oneConflict builds the standard one-conflict shape: c.txt edited differently
@@ -401,4 +400,30 @@ func TestConflictRecordWithMissingObject(t *testing.T) {
 	}
 }
 
-var _ = repo.ErrNoHead
+// The other half of that case: a record pointing at an object that IS in the
+// archive but does not decode as a conflict - a different refusal, and one
+// `merge abort` still recovers from.
+func TestConflictRecordWithMalformedObject(t *testing.T) {
+	f := oneConflict(t)
+	if err := merge.Abort(f.open()); err != nil {
+		t.Fatal(err)
+	}
+	r := f.open()
+	head, _ := r.Head("main")
+	bad := r.Append(archive.Conflict, []byte{0xff, 0x00})
+	r.Meta.Set("main", meta.TagMergeState, meta.MergeState{Ours: head, Theirs: head, OtherPath: "feat"}.Encode())
+	r.Meta.Append("main", meta.TagConflict, meta.ConflictRecord{Conflict: bad}.Encode())
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := merge.Conflicts(f.open())
+	if err != nil || len(cs) != 1 || !cs[0].Malformed || cs[0].Object != nil {
+		t.Fatalf("got %+v, %v", cs, err)
+	}
+	if _, err := merge.Resolve(f.open(), 0, "take-ours"); !errors.Is(err, merge.ErrConflictMalformed) {
+		t.Fatalf("resolve: %v", err)
+	}
+	if err := merge.Abort(f.open()); err != nil {
+		t.Fatal(err)
+	}
+}

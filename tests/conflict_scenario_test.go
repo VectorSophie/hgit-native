@@ -3,6 +3,7 @@ package tests
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ func (f *mergeFx) conflicts() string {
 func (f *mergeFx) resolve(index int, which string) string {
 	f.t.Helper()
 	path, err := merge.Resolve(f.open(), index, which)
-	return cli.SerialResolve(index, path, err)
+	return cli.SerialResolve(index, which, path, err)
 }
 
 func (f *mergeFx) mergeContinue() string {
@@ -101,6 +102,33 @@ func TestScenarioConflictMergeReplaysRegression(t *testing.T) {
 	if normalize(gotText) != normalize(want) {
 		t.Fatalf("TFULL_CONFLICT_MERGE mismatch:\ngot:\n%s\nwant:\n%s", gotText, want)
 	}
+
+	// normalize() masks every 16-hex token, so the comparison above says
+	// nothing about the conflict evidence hashes themselves. Compare those
+	// UNMASKED, against the golden log's own bytes: these are the blob hashes
+	// TempleOS wrote for base_c/main_c/feat_c, so a wrong hash here means the
+	// blob hashing or the OBJ_CONFLICT side encoding disagrees with it.
+	gotSides, wantSides := evidenceHashes(gotText), evidenceHashes(want)
+	if len(wantSides) != 3 {
+		t.Fatalf("expected 3 evidence lines in the fixture, got %v", wantSides)
+	}
+	if strings.Join(gotSides, " ") != strings.Join(wantSides, " ") {
+		t.Fatalf("conflict evidence hashes differ:\ngot:  %v\nwant: %v", gotSides, wantSides)
+	}
+}
+
+// reEvidence matches one `  base|ours|theirs type=N mode=N hash=XXXXXXXXXXXXXXXX`
+// line of a conflict listing.
+var reEvidence = regexp.MustCompile(`(?m)^  (base|ours|theirs) type=\d+ mode=\d+ hash=([0-9a-f]{16})$`)
+
+// evidenceHashes returns "<side>=<hash>" for every evidence line in s, in
+// order, with nothing masked.
+func evidenceHashes(s string) []string {
+	var out []string
+	for _, m := range reEvidence.FindAllStringSubmatch(s, -1) {
+		out = append(out, m[1]+"="+m[2])
+	}
+	return out
 }
 
 // TestScenarioHardenReplaysRegression replays TFULL_HARDEN (lines 356-368) on

@@ -75,17 +75,29 @@ arguments thread it there.
   `STATUS_MERGE_IN_PROGRESS`. Native-only: `CONFLICTS_ERR bad_record` (a
   conflict record of the wrong length, which the HolyC reads by fixed offset
   instead).
-- **Deviations**: (1) the HolyC's `unknown_selector` line echoes the offending
-  selector; ours does not, since the sentinel error does not carry it.
-  (2) `MERGE_ERR internal_still_conflicted_after_resolution` omits the HolyC's
-  `count=` suffix. (3) Metadata and archive are saved once, at the end,
+- **That `bad_record` deviation has a second consequence, on `status`.**
+  Reading the conflict records is all-or-nothing here, so one wrong-length
+  record makes `conflicts` report `CONFLICTS_ERR bad_record` AND makes
+  `SerialMergeBanner` print nothing at all - no `STATUS_MERGE_IN_PROGRESS`
+  line, although a merge really is in progress. `HgitStatus` and
+  `HgitStatusTree` (Status.HC:89-99) count and read those records by fixed
+  offset, so they would still print the banner, with whatever the corrupt
+  bytes imply. The native behaviour is the more cautious of the two - it never
+  prints a count derived from bytes it could not parse - but it is a real
+  difference; `check` remains the command that names the damage, and `merge
+  abort` still clears it.
+- **Deviations**: (1) `MERGE_ERR internal_still_conflicted_after_resolution`
+  omits the HolyC's
+  `count=` suffix. (2) Metadata and archive are saved once, at the end,
   instead of the HolyC's several `FileWrite`s - the same single-`Save`
-  convention every earlier task uses. (4) `TFULL_CONFLICT_MERGE` is replayed
+  convention every earlier task uses. (3) `TFULL_CONFLICT_MERGE` is replayed
   without its rename (ADR 0017 rename-aware merge is not ported), so its four
   `MERGE_AUTO renamed`/`took-theirs r2.txt` lines and the `CHECK_OK
   objects=15` count they inflate are excluded from that one comparison; every
-  conflict-lifecycle line of the segment is compared exactly, and the
-  base/ours/theirs evidence hashes match TempleOS's own output byte for byte.
+  conflict-lifecycle line of the segment is compared exactly, and the three
+  base/ours/theirs evidence hashes are compared UNMASKED against the golden
+  log's own bytes (the segment comparison normalizes 16-hex tokens, so it
+  alone would not catch a wrong hash) - they match.
   `TFULL_CONFLICT_ABORT` is replayed in full except its leading `DISPATCH_OK`
   lines and its `CONFLICTDOC_OK` line (`conflictdoc`, v1.8.6, is not ported).
   `TFULL_HARDEN` is replayed in full, including its object count.

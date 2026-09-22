@@ -402,8 +402,10 @@ func resolutionWord(c merge.ConflictInfo) string {
 	}
 }
 
-// SerialResolve formats Resolve()'s result as HgitResolve printed it.
-func SerialResolve(index int, path string, err error) string {
+// SerialResolve formats Resolve()'s result as HgitResolve printed it. which
+// is the selector that was asked for, echoed back on an unknown one exactly
+// as the HolyC echoes it.
+func SerialResolve(index int, which, path string, err error) string {
 	switch {
 	case errors.Is(err, merge.ErrNoMergeInProgress):
 		return "RESOLVE_ERR no_merge_in_progress\n"
@@ -414,7 +416,7 @@ func SerialResolve(index int, path string, err error) string {
 	case errors.Is(err, merge.ErrConflictMalformed):
 		return "RESOLVE_ERR conflict_object_malformed - see hgit check; 'hgit merge abort' recovers\n"
 	case errors.Is(err, merge.ErrUnknownSelector):
-		return "RESOLVE_ERR unknown_selector - use take-ours or take-theirs\n"
+		return fmt.Sprintf("RESOLVE_ERR unknown_selector %s (use take-ours or take-theirs)\n", which)
 	case err != nil: // native-only: a failed save
 		return "RESOLVE_ERR bad_object\n"
 	}

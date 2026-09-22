@@ -4,6 +4,65 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-22: merge-base (task 14a)
+
+Ports `MergeBase.HC` (the FIXED, post-probe-109 version) into
+`pkg/hgit/mergebase`: `FindMergeBase(r *repo.Repo, a, b archive.Hash) (archive.Hash, bool, error)`.
+Does not port `Merge.HC` (the merge command itself); that is a later
+sub-piece.
+
+- **Algorithm ported exactly**: `collectAllAncestors` builds a's complete
+  ancestor set via BFS over every parent edge (not just `parent[0]`),
+  mirroring `CollectAllAncestors`. `FindMergeBase` then does a breadth-first
+  walk from `b`, level by level over every one of `b`'s parents, returning
+  the first node found in a's ancestor set - the closest-to-`b` common
+  ancestor, exactly as `MergeBase.HC` documents it (not Git's exact
+  "recursive merge-base"). Both commits count as their own ancestor: `a==b`,
+  and either being an ancestor of the other (fast-forward), fall out of the
+  same walk with no special-casing needed, matching the HolyC.
+- **No common ancestor**: `MergeBase.HC`'s `FindMergeBase` returns `Bool
+  found` (`FALSE` if the BFS from `b` exhausts without matching `a`'s
+  ancestor set). Ported as `(archive.Hash, false, nil)` - `found=false` with
+  a nil error, since a disconnected history is not a malformed graph, just
+  an absent answer.
+- **Criss-cross**: `MergeBase.HC`'s own comments (and probe 109's README)
+  say explicitly that genuine criss-cross ambiguity (multiple valid lowest
+  common ancestors, none descending from the other) is a real, separate,
+  deliberately out-of-scope limitation - the HolyC does not attempt to
+  disambiguate, it just returns whichever common ancestor its
+  breadth-first-from-`b` walk reaches first. Ported unchanged: no
+  disambiguation added. `TestCrissCross` pins the deterministic (but
+  arbitrary, parent-order-dependent) choice this produces for one
+  constructed scenario, not a "correct" answer.
+- **Deviation: malformed graph now returns an error instead of silently
+  degrading.** `MergeBase.HC`'s C-style `IndexLookup` failure on an
+  unresolvable parent hash is simply not entered (the `if` guarding it is
+  skipped), so that node silently stops expanding, as if it had no
+  parents - the search can still terminate and even still succeed, just
+  based on an incomplete ancestor set, with no signal that anything was
+  wrong. That is a real risk of a silently-wrong answer feeding straight
+  into a real three-way merge. This port instead returns the error from
+  `repo.Repo.Commit` (`ErrNotFound`/`*NotTypeError`) up through
+  `FindMergeBase` as soon as a parent hash fails to resolve to a real
+  commit, rather than pretending the graph ends there. `TestMalformedGraph`
+  pins this. No other observable behaviour changes: a well-formed graph
+  (the only kind the real archive ever produces) behaves identically either
+  way.
+- Cycle safety is not a special case: both BFS passes use a visited-set
+  membership check before enqueueing, the same technique
+  `HashSetAdd`/`HashSetContains` already used in the HolyC, so a cyclic or
+  diamond-shaped graph can never be re-expanded or looped on; no separate
+  depth/step limit was needed or added.
+- No scenario test drawn from `contract/tests/full-regression.hc`: its own
+  merge-base computation only happens inside `Hgit("merge ...")`, i.e.
+  behind the merge command itself, which this sub-piece does not build.
+  Once the merge command lands, its own tests can exercise this package
+  end-to-end; for now the fixture-built unit tests above (linear chain, two
+  branches from a root, fast-forward both directions, `a==b`, no common
+  ancestor, probe 109's real merge-second-parent scenario, criss-cross,
+  malformed graph, a long chain proving BFS termination) are the only
+  coverage.
+
 ## 2026-09-22: named paths, undo/redo/operation log, export/import (task 13)
 
 Ports `Paths.HC`, `OpLog.HC` and `Portable.HC`. They live in

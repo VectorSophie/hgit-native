@@ -121,12 +121,23 @@ func (w *treeWalker) walk(relDir string, old *object.Tree, depth int) ([]Change,
 	// entirely, or replaced by the other kind (still reported by the
 	// new-node pass above as TYPE_CHANGED, so skipped here to avoid a
 	// duplicate line).
+	//
+	// For an old TREE-typed entry, "is it still real" is Status.HC's own
+	// FilesFind("<dir_path><tname>*", 0) != NULL - a PREFIX glob against
+	// this level's own disk entries, not an exact-name/is-a-directory
+	// check. hasPrefixSibling reproduces that exactly, including its two
+	// real consequences: a same-named plain file satisfies it (so a
+	// directory-to-file type change reports only TYPE_CHANGED, never a
+	// crash from trying to list a file as a directory), and an unrelated
+	// sibling whose name merely starts with the same prefix (e.g. "Sub"
+	// vs. "SubNotes.txt") also satisfies it, suppressing the deletion
+	// recursion into "Sub" even though "Sub" itself is genuinely gone.
 	if old != nil {
 		for _, e := range old.Entries {
 			rel := joinRel(relDir, e.Name)
 			if e.ChildType == archive.Tree {
-				if isDir(filepath.Join(w.root, filepath.FromSlash(rel))) {
-					continue // handled by the new-node pass above
+				if hasPrefixSibling(nodes, e.Name) {
+					continue // still "real" per Status.HC's own prefix-glob check
 				}
 				oldSub, _ := w.r.Tree(e.ChildHash)
 				child, err := w.walk(rel, oldSub, depth+1)

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/VectorSophie/hgit-native/pkg/hgit/archive"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/attrs"
@@ -311,12 +312,6 @@ func listAll(dir string) ([]FileSize, error) {
 	return out, nil
 }
 
-// isDir reports whether p exists and is a directory.
-func isDir(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && fi.IsDir()
-}
-
 // isNotExist reports whether err is (or wraps) "does not exist".
 func isNotExist(err error) bool { return errors.Is(err, os.ErrNotExist) }
 
@@ -324,3 +319,19 @@ func isNotExist(err error) bool { return errors.Is(err, os.ErrNotExist) }
 // threads it: path.Join, never filepath - these are always slash-separated,
 // repo-relative names, not OS paths.
 func joinRel(dir, name string) string { return path.Join(dir, name) }
+
+// hasPrefixSibling reports whether any node's name starts with prefix -
+// Status.HC's own StrPrint(dmask, "%s*", check_path); FilesFind(dmask, 0)
+// check for whether an old TREE-typed tree entry's directory is "still
+// real", ported exactly: it is a PREFIX match against this level's own
+// disk entries, not an exact-name or is-a-directory test. See
+// statustree.go's own deletion-pass comment for what this means in
+// practice.
+func hasPrefixSibling(nodes []workdir.Node, prefix string) bool {
+	for _, n := range nodes {
+		if strings.HasPrefix(n.Name, prefix) {
+			return true
+		}
+	}
+	return false
+}

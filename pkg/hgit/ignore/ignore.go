@@ -47,16 +47,17 @@ func ParsePattern(p string) (Pattern, bool) {
 	return pt, true
 }
 
-// Match reports whether the pattern matches relPath (slash separated, relative
+// match reports whether the pattern matches relPath (slash separated, relative
 // to the repo root) for the KindName/KindDirContents kinds - MatchLast defers
 // to it for those. Name patterns match the basename only. DirContents match
 // when the parent directory equals the pattern text exactly. A KindDir
-// pattern never reaches here: MatchLast handles it directly, and no other
-// caller exists - the ADR 0014 rule that ignore never descends into a
-// directory (so a Dir pattern is only ever compared with a path's own last
-// component, never an ancestor) means nothing needs the whole-subtree,
-// isDir-aware match this used to also perform.
-func (p Pattern) Match(relPath string) bool {
+// pattern never reaches here: MatchLast handles it directly. Unexported:
+// MatchLast is its only caller anywhere in this codebase - the ADR 0014 rule
+// that ignore never descends into a directory (so a Dir pattern is only ever
+// compared with a path's own last component, never an ancestor) means
+// nothing needs the whole-subtree, isDir-aware match this used to also
+// perform, and nothing outside this package has ever needed it either.
+func (p Pattern) match(relPath string) bool {
 	dir, base := "", relPath
 	if i := strings.LastIndexByte(relPath, '/'); i >= 0 {
 		dir, base = relPath[:i], relPath[i+1:]
@@ -70,15 +71,15 @@ func (p Pattern) Match(relPath string) bool {
 	return false
 }
 
-// MatchLast is the attributes flavour of Match: a Dir pattern matches only
+// MatchLast is the attributes flavour of match: a Dir pattern matches only
 // when the path's own last component equals it; Name and DirContents behave
-// as in Match.
+// as in match.
 func (p Pattern) MatchLast(relPath string) bool {
 	if p.Kind == KindDir {
 		base := relPath[strings.LastIndexByte(relPath, '/')+1:]
 		return base == p.Text
 	}
-	return p.Match(relPath)
+	return p.match(relPath)
 }
 
 // IgnoredLast is the exact shape of the HolyC's IsIgnored(name, rel_dir),

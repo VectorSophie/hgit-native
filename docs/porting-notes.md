@@ -55,34 +55,62 @@ Ports `Status.HC`'s `HgitStatus` (flat) and `StatusTreeWalk`/`HgitStatusTree`
   `StatusTreeWalk`'s blob branch only ever calls `CommPrint` for
   `STATUS_MODIFIED`; an unchanged file at any nesting level produces nothing.
   Mode is still checked and reported independently either way.
-- **A tracked name whose kind flips (file<->directory) can print BOTH
-  STATUS_TYPE_CHANGED and STATUS_DELETED for the same path**, ported exactly
-  as found, not smoothed over: `StatusTreeWalk`'s forward pass reports
-  TYPE_CHANGED from the disk-side walk, but its separate deletion pass only
-  special-cases an old TREE-typed entry (checking whether the directory still
-  exists) - an old BLOB-typed entry whose name is now a real directory (or
-  vice versa) still gets a plain `HgitFileRead`/`workdir.Read` attempt in the
-  deletion pass, which fails, so the same name is also reported DELETED. Both
-  lines are genuine `Status.HC` output for this case (verified against the
-  source, not assumed), covered by `TestStatusTreeTypeChanged`.
-- **One resolved deviation from that same quirk's mirror image**: `Status.HC`
-  decides whether an old TREE-typed entry's directory "still exists" with
-  `FilesFind("<check_path>*", 0) != NULL`, a glob that also matches a plain
-  FILE now sitting at that exact name (zero extra characters satisfies the
-  trailing `*`) - a false positive that would suppress the deletion recursion
-  a directory-to-file type change should otherwise trigger. This port uses
-  `os.Stat` + `IsDir` instead, which does not share that false positive. This
-  is a genuine, narrow behavioural difference (only reachable for a tracked
-  directory replaced by a same-named file, not exercised by any fixture
-  segment); the corrected check was chosen deliberately rather than
-  reproducing an incidental glob-matching artifact of `FilesFind`'s API.
+- **A tracked name whose kind flips can print BOTH STATUS_TYPE_CHANGED and
+  STATUS_DELETED for the same path - but only in ONE direction: a tracked
+  FILE (a BLOB-typed old entry) replaced by a same-named directory.** Ported
+  exactly as found, not smoothed over: `StatusTreeWalk`'s deletion pass only
+  special-cases an old TREE-typed entry (the `if (ttype == OBJ_TREE)` branch,
+  see the next bullet); an old BLOB-typed entry whose name is now a real
+  directory falls into the `else` branch instead, which still does a plain
+  `HgitFileRead`/`workdir.Read` on that name - which fails, because it is now
+  a directory - so the name is reported DELETED there too, on top of the
+  TYPE_CHANGED the forward pass already reported. The other direction (a
+  tracked DIRECTORY replaced by a file) does NOT double-report - see below
+  for why. Verified directly against the source, not assumed; the
+  file-becomes-directory (double-report) case is `TestStatusTreeTypeChanged`,
+  the directory-becomes-file (single TYPE_CHANGED only) case is
+  `TestStatusTreeTrackedDirectoryReplacedByFile`.
+- **The old-TREE-typed side of that same deletion pass reproduces a real
+  `FilesFind` glob quirk, on purpose, because "correcting" it broke on real
+  input.** `Status.HC` decides whether an old TREE-typed entry's directory is
+  "still real" with `StrPrint(dmask, "%s*", check_path);
+  FilesFind(dmask, 0) != NULL` - `check_path` is `dir_path + tname` with NO
+  trailing slash, so this is a PREFIX glob against the *parent* directory's
+  own entries, not an exact-name or is-a-directory test. Two real
+  consequences, both now ported exactly (`hasPrefixSibling` in
+  `pkg/hgit/status/status.go`, called from `statustree.go`'s deletion pass
+  against the same disk listing the forward pass already made for this
+  level):
+  1. A same-named plain file satisfies the glob trivially (zero extra
+     characters), so a directory-to-file type change reports only
+     STATUS_TYPE_CHANGED and never recurses the deletion pass into the old
+     directory at all - no STATUS_DELETED lines, and (the actual bug an
+     earlier version of this port had) no error either. That earlier version
+     used `os.Stat`+`IsDir` here instead, which does NOT share this false
+     positive: `IsDir` on a real file correctly reports "not a directory", so
+     the port recursed `walk()` into what is now a plain file, `os.ReadDir`
+     returned `ENOTDIR` (not `os.ErrNotExist`, so `listDirSafe` did not
+     swallow it), and the error propagated out of `StatusTree` entirely -
+     discarding the already-correct STATUS_TYPE_CHANGED line and surfacing
+     `STATUS_ERR bad_object` to the caller instead.
+     `TestStatusTreeTrackedDirectoryReplacedByFile` is the regression test.
+  2. An unrelated SIBLING whose name merely starts with the same prefix also
+     satisfies the glob (e.g. a tracked directory "Sub" that is genuinely
+     gone, alongside an unrelated file "SubNotes.txt") - so the deletion
+     recursion into "Sub" is suppressed even though "Sub" really is gone, and
+     none of "Sub"'s former children are reported DELETED. This looks like a
+     bug in the HolyC, but it is real, verified behaviour, not a porting
+     artifact, so it is reproduced rather than "corrected" out from under it.
+     `TestStatusTreeDeletedDirectorySuppressedByPrefixSibling` is the
+     regression test.
 - **The `ignore.Rules.Ignored(path, isDir)` method and the ancestor-directory
   branch of `Pattern.Match` are deleted, as dead code.** `Status.HC` calls
   `IsIgnored(name, rel_dir)` - the same shape `IgnoredLast` already is - in
   both the flat and the tree walk, exactly like both `Offer.HC` paths;
   nothing in this codebase, offer or status, ever calls the `Match`-based,
-  isDir-aware form. `Match` itself is kept (only its `KindDir` case is
-  removed) because `MatchLast` still calls it for `KindName`/`KindDirContents`.
+  isDir-aware form. The remaining method (only its `KindDir` case removed) is
+  now unexported to `match`, since `MatchLast` (which still calls it for
+  `KindName`/`KindDirContents`) is its only caller anywhere in this codebase.
   `pkg/hgit/ignore/ignore_test.go`'s table-driven test was rewritten against
   `IgnoredLast` instead of the deleted method, and a duplicated `{"build",
   true}` case in `TestIgnoredLast` was collapsed into one.
@@ -97,6 +125,24 @@ Ports `Status.HC`'s `HgitStatus` (flat) and `StatusTreeWalk`/`HgitStatusTree`
   `Status.HC` prints before any of this are the caller's concern (they happen
   at `repo.Open` time, before a `*repo.Repo` exists to pass in), the same
   split `check`'s own `SerialCheck(rep, openErr)` already uses.
+- **`STATUS_ERR bad_object` is a native-only token**, the same convention as
+  the existing `HISTORY_ERR bad_object`/`SEE_ERR bad_object` entries above:
+  `serialStatus`'s fallback for any error `Status`/`StatusTree` return that
+  isn't `*NoOfferingsYetError` or `ErrNoHead` (the HolyC's own preamble never
+  reaches a state like this). It is genuinely user-visible on more than one
+  path even after the prefix-glob fix above - e.g. an unreadable file
+  (`*workdir.ReadError`) partway through a walk - not only the now-fixed
+  ENOTDIR case.
+- **Known limitation: a non-regular file (a symlink whose target no longer
+  resolves, a FIFO, a socket) encountered by `statustree` aborts the whole
+  walk.** `workdir.Read`'s underlying `os.ReadFile` returns a plain error for
+  any of these, which `status.Status`/`status.StatusTree` propagate exactly
+  like any other read failure (see `workdir.ReadError`'s own doc) - there is
+  no per-entry "skip and keep going" here, matching every other read failure
+  in this package, but worth naming since a broken symlink or a FIFO left in
+  a working directory is a more everyday way to hit it than a permissions
+  error. Not exercised by any fixture or test; `Status.HC`'s own
+  `HgitFileRead` has no distinct behaviour for these either.
 - **Small carry-overs done alongside this task** (per the review that found
   them): an offer-level test proving a flat `Offer` hides a plain FILE named
   `build` against a `build/` `.hgitignore` rule, the same way a real directory

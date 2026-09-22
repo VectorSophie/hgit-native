@@ -251,6 +251,67 @@ func TestFuzzyRenameSizeCeiling(t *testing.T) {
 	}
 }
 
+// TestFuzzyRenameAsymmetryDeletedSideIsUncapped pins the documented
+// asymmetry: MaxFuzzyRenameBytes only limits the NEW/disk-side candidate's
+// buffer (Status.HC's new_contents[512] slot array). The DELETED side's
+// content is read straight from the archive with no size limit at all, so a
+// deleted file well over 511 bytes must still be found by fuzzy matching as
+// long as the NEW candidate itself is small enough.
+func TestFuzzyRenameAsymmetryDeletedSideIsUncapped(t *testing.T) {
+	shared := strings.Repeat("a", 400) + " a shared block of text present in both files"
+	oldContent := shared + " and then a long unique tail that pushes the deleted file's own content past five hundred and eleven bytes for certain, well past it"
+	newContent := shared + " NEW" // well under 511 bytes
+	if len(oldContent) <= 511 {
+		t.Fatalf("test setup: oldContent is only %d bytes, want > 511", len(oldContent))
+	}
+	if len(newContent) > 511 {
+		t.Fatalf("test setup: newContent is %d bytes, want <= 511", len(newContent))
+	}
+
+	f := setup(t)
+	f.writeIgnore("")
+	seedIDs(t, 0x1)
+	f.write("orig.txt", oldContent)
+	f.offer("*.txt", "first")
+
+	f.remove("orig.txt")
+	f.write("renamed.txt", newContent)
+
+	r := f.reopen()
+	got, err := status.Status(r, f.dir, "*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Kind != status.Renamed || got[0].OldPath != "orig.txt" || got[0].Path != "renamed.txt" {
+		t.Fatalf("got %+v, want a fuzzy RENAMED match despite the deleted side being over 511 bytes", got)
+	}
+}
+
+// TestExactRenameDetectedRegardlessOfSize pins that MaxFuzzyRenameBytes only
+// governs the FUZZY pass: an exact-content rename (no edit at all) of a file
+// well over 511 bytes must still be detected, because the exact-hash pass
+// runs first and never consults the fuzzy-rename buffer at all.
+func TestExactRenameDetectedRegardlessOfSize(t *testing.T) {
+	content := strings.Repeat("a", 600) // well over MaxFuzzyRenameBytes
+	f := setup(t)
+	f.writeIgnore("")
+	seedIDs(t, 0x1)
+	f.write("orig.txt", content)
+	f.offer("*.txt", "first")
+
+	f.remove("orig.txt")
+	f.write("renamed.txt", content) // identical content, just renamed
+
+	r := f.reopen()
+	got, err := status.Status(r, f.dir, "*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Kind != status.Renamed || got[0].OldPath != "orig.txt" || got[0].Path != "renamed.txt" {
+		t.Fatalf("got %+v, want an exact RENAMED match despite the content being over 511 bytes", got)
+	}
+}
+
 func TestStatusCompetingRenameCandidatesFirstMatchWins(t *testing.T) {
 	f := setup(t)
 	f.writeIgnore("")

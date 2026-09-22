@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/VectorSophie/hgit-native/pkg/hgit/repo"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/status"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/workdir"
 )
@@ -134,6 +133,81 @@ func TestStatusTreeTypeChanged(t *testing.T) {
 	}
 }
 
+// TestStatusTreeTrackedDirectoryReplacedByFile: Status.HC's deletion pass
+// decides whether an old TREE-typed entry's directory is "still real" with
+// FilesFind("<dir_path><tname>*", 0) != NULL - a PREFIX glob against the
+// parent directory's own entries, not an exact-name existence check. A
+// same-named plain file satisfies that glob trivially (zero extra
+// characters), so the HolyC treats the directory as still present and
+// skips the deletion recursion entirely - only STATUS_TYPE_CHANGED (from
+// the forward pass) is printed, nothing from inside the former directory,
+// and (this is the crash this test guards against) no error: a literal
+// "is this still a directory" check would instead try to list a plain file
+// as a directory and fail with ENOTDIR.
+func TestStatusTreeTrackedDirectoryReplacedByFile(t *testing.T) {
+	f := setup(t)
+	f.writeIgnore("")
+	seedIDs(t, 0x1, 0x2)
+	f.mkdir("Sub")
+	f.write("Sub/inner.txt", "was a directory")
+	f.offerTree("first")
+
+	if err := os.RemoveAll(filepath.Join(f.dir, "Sub")); err != nil {
+		t.Fatal(err)
+	}
+	f.write("Sub", "now a plain file")
+
+	r := f.reopen()
+	got, err := status.StatusTree(r, f.dir)
+	if err != nil {
+		t.Fatalf("StatusTree returned an error instead of STATUS_TYPE_CHANGED: %v", err)
+	}
+	if len(got) != 1 || got[0].Kind != status.TypeChanged || got[0].Path != "Sub" {
+		t.Fatalf("got %+v, want exactly one TYPE_CHANGED Sub and nothing else", got)
+	}
+}
+
+// TestStatusTreeDeletedDirectorySuppressedByPrefixSibling: the same glob,
+// Status.HC's own behaviour when the tracked directory is genuinely gone
+// but a SIBLING name happens to start with the same prefix (e.g. "Sub" the
+// directory vs. "SubNotes.txt" the file) - FilesFind("Sub*", 0) still finds
+// SubNotes.txt, so still_dir is (wrongly, but faithfully) true and the
+// deletion recursion into Sub/ is suppressed: none of Sub/'s former
+// children are reported DELETED.
+func TestStatusTreeDeletedDirectorySuppressedByPrefixSibling(t *testing.T) {
+	f := setup(t)
+	f.writeIgnore("")
+	seedIDs(t, 0x1, 0x2)
+	f.mkdir("Sub")
+	f.write("Sub/inner.txt", "content")
+	f.offerTree("first")
+
+	if err := os.RemoveAll(filepath.Join(f.dir, "Sub")); err != nil {
+		t.Fatal(err)
+	}
+	f.write("SubNotes.txt", "an unrelated sibling whose name happens to start with Sub")
+
+	r := f.reopen()
+	got, err := status.StatusTree(r, f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range got {
+		if c.Kind == status.Deleted {
+			t.Fatalf("got %+v, want no DELETED lines - SubNotes.txt suppresses the Sub/ recursion", got)
+		}
+	}
+	sawNew := false
+	for _, c := range got {
+		if c.Kind == status.New && c.Path == "SubNotes.txt" {
+			sawNew = true
+		}
+	}
+	if !sawNew {
+		t.Fatalf("got %+v, want SubNotes.txt reported NEW", got)
+	}
+}
+
 func TestStatusTreeIgnoredDirNotDescendedNorRead(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root ignores file permissions")
@@ -198,14 +272,6 @@ func TestStatusTreeUnreadableFileTypedError(t *testing.T) {
 func TestStatusTreeTooDeep(t *testing.T) {
 	f := setup(t)
 	f.writeIgnore("")
-	r, err := repo.Open(f.path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A repo with no head at all still hits the same depth guard once a real
-	// tree exists; simplest reachable proof here is a plain offer, then a
-	// deep real directory chain exceeding MaxTreeDepth.
-	_ = r
 	f.write("root.txt", "x")
 	f.offerTree("first")
 
@@ -220,8 +286,8 @@ func TestStatusTreeTooDeep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r2 := f.reopen()
-	_, err = status.StatusTree(r2, f.dir)
+	r := f.reopen()
+	_, err := status.StatusTree(r, f.dir)
 	if !errors.Is(err, status.ErrTooDeep) {
 		t.Fatalf("err = %v, want ErrTooDeep", err)
 	}

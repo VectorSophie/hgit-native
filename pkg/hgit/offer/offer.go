@@ -114,6 +114,13 @@ type builder struct {
 // that point can still leave objects behind: Save writes the .hgs before the
 // .m, so an interrupted save leaves objects that `check` reports as dangling
 // and a HEAD that never moved.
+//
+// Any error returned after Append has been called at least once (a bad file
+// read partway through the walk, a name too long, ErrEntityID, ErrTooDeep, a
+// failed Save) leaves r's in-memory Arc/Meta already mutated with the
+// objects appended so far, even though nothing was necessarily saved to
+// disk. A caller that gets a non-nil error here must discard r rather than
+// reuse it - reopen the repository fresh instead.
 func Offer(r *repo.Repo, work string, mask string, opts Options) (archive.Hash, error) {
 	var zero archive.Hash
 	if len(opts.Message) > MaxMessageLen {
@@ -152,6 +159,11 @@ func Offer(r *repo.Repo, work string, mask string, opts Options) (archive.Hash, 
 // is TreeBuildRecursive in place of the single FilesFind pass. Everything
 // else - the parent lookup, the commit, the operation log, HEAD and the save
 // - is identical.
+//
+// The same mutate-then-maybe-fail contract as Offer applies: any error
+// leaves r's in-memory state holding whatever objects the walk had already
+// appended, so a caller that gets one must discard r and reopen instead of
+// reusing it.
 func OfferTree(r *repo.Repo, work string, opts Options) (archive.Hash, error) {
 	var zero archive.Hash
 	if len(opts.Message) > MaxMessageLen {

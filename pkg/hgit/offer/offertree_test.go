@@ -407,3 +407,154 @@ func TestOfferWithNoOnIgnoredHookStillIgnores(t *testing.T) {
 		t.Fatal("x.tmp must still be ignored without a hook")
 	}
 }
+
+// TestOfferTreeFileBecomesDirectoryGetsFreshIdentity: buildTree only carries
+// a directory node's old identity forward when the OLD entry of that name
+// was itself a tree (foundOldSub) - a name that used to be a tracked FILE
+// and is now a directory does not satisfy that, so it gets a brand-new
+// identity instead. This is the opposite rule from the plain-file path
+// (CarryEntityID, used for FILE nodes only), which matches by name alone
+// regardless of the old entry's type - see the reverse-direction test below.
+func TestOfferTreeFileBecomesDirectoryGetsFreshIdentity(t *testing.T) {
+	f := setup(t)
+	f.writeIgnore("")
+	seedIDs(t, 0x11, 0x22)
+	f.write("thing", "was a plain file")
+	first := f.offerTree("first")
+	fileID := idOf(t, f.tree(first), "thing")
+
+	if err := os.Remove(filepath.Join(f.dir, "thing")); err != nil {
+		t.Fatal(err)
+	}
+	f.mkdir("thing")
+	f.write("thing/inner.txt", "now a directory")
+	second := f.offerTree("second")
+
+	tr := f.tree(second)
+	e, ok := tr.Find("thing")
+	if !ok || e.ChildType != archive.Tree {
+		t.Fatalf("thing = %+v, want a tree entry", e)
+	}
+	if e.EntityID == fileID {
+		t.Fatal("a file-to-directory type change must get a fresh identity, not the file's old one")
+	}
+}
+
+// TestOfferTreeDirectoryBecomesFileCarriesIdentityByName is the reverse
+// direction of the same rule.
+func TestOfferTreeDirectoryBecomesFileCarriesIdentityByName(t *testing.T) {
+	f := setup(t)
+	f.writeIgnore("")
+	seedIDs(t, 0x11, 0x22)
+	f.mkdir("thing")
+	f.write("thing/inner.txt", "a directory")
+	first := f.offerTree("first")
+	dirID := idOf(t, f.tree(first), "thing")
+
+	if err := os.RemoveAll(filepath.Join(f.dir, "thing")); err != nil {
+		t.Fatal(err)
+	}
+	f.write("thing", "now a plain file")
+	second := f.offerTree("second")
+
+	e, ok := f.tree(second).Find("thing")
+	if !ok || e.ChildType != archive.Blob {
+		t.Fatalf("thing = %+v, want a blob entry", e)
+	}
+	if e.EntityID != dirID {
+		t.Fatal("the name-matched entity id must carry forward across the type change")
+	}
+}
+
+// TestOfferTreeDeletedThenRecreatedDirectoryGetsFreshIdentity: once a
+// directory is fully removed from a tree (nothing left inside it to track),
+// its name no longer appears in that tree at all - so re-creating it later
+// finds no name match and gets a brand-new identity, never the old one.
+func TestOfferTreeDeletedThenRecreatedDirectoryGetsFreshIdentity(t *testing.T) {
+	f := setup(t)
+	f.writeIgnore("")
+	seedIDs(t, 0x11, 0x22, 0x33)
+	f.mkdir("SubA")
+	f.write("SubA/inner.txt", "v1")
+	first := f.offerTree("first")
+	oldID := idOf(t, f.tree(first), "SubA")
+
+	if err := os.RemoveAll(filepath.Join(f.dir, "SubA")); err != nil {
+		t.Fatal(err)
+	}
+	second := f.offerTree("second") // SubA tracked nowhere now (empty dirs aren't tracked)
+	if _, ok := f.tree(second).Find("SubA"); ok {
+		t.Fatal("an empty/gone directory must not appear in the tree")
+	}
+
+	f.mkdir("SubA")
+	f.write("SubA/inner.txt", "v2, a different file entirely")
+	third := f.offerTree("third")
+	e, ok := f.tree(third).Find("SubA")
+	if !ok {
+		t.Fatal("SubA should be tracked again")
+	}
+	if e.EntityID == oldID {
+		t.Fatal("a re-created directory must get a fresh identity, not the old one")
+	}
+}
+
+// TestOfferTreeUnresolvableOldSubtreeStillCarriesItsID: when the old tree's
+// entry for a directory names a hash the archive cannot resolve, buildTree's
+// oldSub falls back to nil (recursed as if empty) but the entity id itself -
+// read directly off the old entry, never off the resolved subtree - still
+// carries forward, exactly as the HolyC's own NULL old_sub_tree_content
+// leaves old_entity_id untouched.
+func TestOfferTreeUnresolvableOldSubtreeStillCarriesItsID(t *testing.T) {
+	f := setup(t)
+	f.writeIgnore("")
+	seedIDs(t, 0x11, 0x22)
+	f.mkdir("SubA")
+	f.write("SubA/inner.txt", "v1")
+	first := f.offerTree("first")
+	oldID := idOf(t, f.tree(first), "SubA")
+
+	// Corrupt the archive so SubA's own tree object can no longer be
+	// resolved by hash, without touching the root tree's entry for SubA.
+	r, err := repo.Open(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootTr, err := r.Tree(mustCommitTree(t, r, first))
+	if err != nil {
+		t.Fatal(err)
+	}
+	subEntry, ok := rootTr.Find("SubA")
+	if !ok {
+		t.Fatal("SubA missing from the root tree")
+	}
+	for i := range r.Arc.Records {
+		if r.Arc.Records[i].Hash == subEntry.ChildHash {
+			r.Arc.Records[i].Data[len(r.Arc.Records[i].Data)-1] ^= 1          // corrupt, keep the hash key unresolved on purpose
+			r.Arc.Records = append(r.Arc.Records[:i], r.Arc.Records[i+1:]...) // drop it: unresolvable
+			break
+		}
+	}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	f.write("SubA/inner.txt", "v2")
+	second := f.offerTree("second")
+	e, ok := f.tree(second).Find("SubA")
+	if !ok {
+		t.Fatal("SubA missing from the second tree")
+	}
+	if e.EntityID != oldID {
+		t.Fatal("an unresolvable old subtree must still carry its own entity id forward")
+	}
+}
+
+func mustCommitTree(t *testing.T, r *repo.Repo, h archive.Hash) archive.Hash {
+	t.Helper()
+	c, err := r.Commit(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.Tree
+}

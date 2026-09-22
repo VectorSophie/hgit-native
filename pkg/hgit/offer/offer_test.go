@@ -522,3 +522,33 @@ func TestSavedRepoReopensAndChecksClean(t *testing.T) {
 		t.Fatalf("history = %+v", lines)
 	}
 }
+
+// TestFlatOfferIgnoresPlainFileMatchingDirPattern: a flat Offer has no
+// subdirectory entries at all (workdir.List skips directories outright), but
+// a plain FILE literally named "build" is still hidden by a "build/"
+// .hgitignore rule - Ignore.HC's IsIgnored compares the DIR pattern against
+// the candidate's own last name component only, never checking whether the
+// candidate is actually a directory.
+func TestFlatOfferIgnoresPlainFileMatchingDirPattern(t *testing.T) {
+	f := setup(t)
+	f.write(".hgitignore", "build/\n")
+	f.write("build", "a plain file, not a directory")
+	f.write("keep.txt", "kept")
+	var ignored []string
+	h, err := f.offerOpts("*", offer.Options{
+		Message:   "first",
+		OnIgnored: func(n string) { ignored = append(ignored, n) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := names(f.tree(h))
+	for _, n := range got {
+		if n == "build" {
+			t.Fatalf("names = %v, want the plain file \"build\" hidden", got)
+		}
+	}
+	if len(ignored) != 1 || ignored[0] != "build" {
+		t.Fatalf("ignored = %v, want [build]", ignored)
+	}
+}

@@ -2,8 +2,8 @@
 // functions over the file's text. It never touches the filesystem.
 //
 // The safety rule "ignore never hides an already-tracked file" is enforced by
-// the CALLER, which must consult the old tree first and only ask Ignored about
-// untracked names. Nothing here tracks anything.
+// the CALLER, which must consult the old tree first and only ask IgnoredLast
+// about untracked names. Nothing here tracks anything.
 package ignore
 
 import "strings"
@@ -48,12 +48,15 @@ func ParsePattern(p string) (Pattern, bool) {
 }
 
 // Match reports whether the pattern matches relPath (slash separated, relative
-// to the repo root). Name patterns match the basename only, files and
-// directories alike. Dir patterns match any directory component with that
-// exact name (the path's own last component only when isDir), which covers the
-// whole subtree. DirContents match when the parent directory equals the
-// pattern text exactly.
-func (p Pattern) Match(relPath string, isDir bool) bool {
+// to the repo root) for the KindName/KindDirContents kinds - MatchLast defers
+// to it for those. Name patterns match the basename only. DirContents match
+// when the parent directory equals the pattern text exactly. A KindDir
+// pattern never reaches here: MatchLast handles it directly, and no other
+// caller exists - the ADR 0014 rule that ignore never descends into a
+// directory (so a Dir pattern is only ever compared with a path's own last
+// component, never an ancestor) means nothing needs the whole-subtree,
+// isDir-aware match this used to also perform.
+func (p Pattern) Match(relPath string) bool {
 	dir, base := "", relPath
 	if i := strings.LastIndexByte(relPath, '/'); i >= 0 {
 		dir, base = relPath[:i], relPath[i+1:]
@@ -61,33 +64,21 @@ func (p Pattern) Match(relPath string, isDir bool) bool {
 	switch p.Kind {
 	case KindName:
 		return globMatch(p.Text, base)
-	case KindDir:
-		if isDir && base == p.Text {
-			return true
-		}
-		if dir == "" {
-			return false
-		}
-		for _, c := range strings.Split(dir, "/") {
-			if c == p.Text {
-				return true
-			}
-		}
 	case KindDirContents:
 		return dir == p.Text
 	}
 	return false
 }
 
-// MatchLast is the attributes flavour of Match: no dir/file distinction and no
-// subtree, so a Dir pattern matches only when the path's own last component
-// equals it; Name and DirContents behave as in Match.
+// MatchLast is the attributes flavour of Match: a Dir pattern matches only
+// when the path's own last component equals it; Name and DirContents behave
+// as in Match.
 func (p Pattern) MatchLast(relPath string) bool {
 	if p.Kind == KindDir {
 		base := relPath[strings.LastIndexByte(relPath, '/')+1:]
 		return base == p.Text
 	}
-	return p.Match(relPath, false)
+	return p.Match(relPath)
 }
 
 // IgnoredLast is the exact shape of the HolyC's IsIgnored(name, rel_dir),
@@ -97,8 +88,8 @@ func (p Pattern) MatchLast(relPath string) bool {
 // descends into an ignored directory, so it never needs to), and a "dir/*"
 // pattern is compared with relPath's directory part. Last matching rule wins.
 //
-// Both offer paths use this. Ignored above keeps the path-and-isDir shape
-// that status and diff will want.
+// Every caller - both offer paths, and status/statustree - uses this; there
+// is no other production entry point into the ignore rules.
 func (r *Rules) IgnoredLast(relPath string) bool {
 	if r == nil {
 		return false
@@ -166,25 +157,4 @@ func ParseIgnore(src string) *Rules {
 		}
 	}
 	return r
-}
-
-// Ignored reports whether relPath is ignored: the last matching rule wins.
-//
-// Caller contract: the caller must know isDir, must never descend into a
-// directory reported ignored, and must consult tracking first (ADR 0014). A
-// negation that would re-include a file inside an ignored directory is never
-// evaluated by the HolyC because it does not descend; callers that follow that
-// contract get the same behaviour, although Ignored on such a path alone
-// reports true from the directory rule unless the negation matches later.
-func (r *Rules) Ignored(relPath string, isDir bool) bool {
-	ignored := false
-	if r == nil {
-		return false
-	}
-	for _, ru := range r.rules {
-		if ru.pat.Match(relPath, isDir) {
-			ignored = !ru.neg
-		}
-	}
-	return ignored
 }

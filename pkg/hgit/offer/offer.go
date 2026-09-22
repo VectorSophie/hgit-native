@@ -351,12 +351,7 @@ func (b *builder) finish(p string, tree *object.Tree, parent archive.Hash, hasPa
 	if hasParent {
 		prev = parent
 	}
-	b.r.Meta.Append(p, meta.TagOpLog, meta.OpLogEntry{Timestamp: c.Timestamp, Prev: prev, New: commit}.Encode())
-	for {
-		if _, ok := b.r.Meta.PopLast(p, meta.TagRedoLog); !ok {
-			break
-		}
-	}
+	b.r.AppendOp(p, meta.OpLogEntry{Timestamp: c.Timestamp, Prev: prev, New: commit})
 	if err := b.r.SetHead(p, commit); err != nil {
 		return zero, err
 	}

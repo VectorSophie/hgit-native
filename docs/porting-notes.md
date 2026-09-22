@@ -4,6 +4,89 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-22: named paths, undo/redo/operation log, export/import (task 13)
+
+Ports `Paths.HC`, `OpLog.HC` and `Portable.HC`. They live in
+`pkg/hgit/repo` as `ops.go`, not in a separate package: every one of these
+functions is a read-modify-write of `Repo.Meta` plus `CurrentPath`/`Head`/
+`SetHead`/`Save`, all of which `Repo` already owns, and `Paths.HC`'s read
+side (`CurrentPathGet`/`CurrentHeadRead`) was already ported into `repo.go`.
+A `pkg/hgit/ops` package would have had to either take `*repo.Repo` and
+reach into its metadata anyway or force `Repo` to export more of its
+internals; neither buys anything. The surface is
+`(*Repo).PathNew/PathGo/PathList/PathClose/PathExists`,
+`(*Repo).Undo/Redo/OperationHistory/OperationRestore/AppendOp` and the
+package-level `Export`/`Import`.
+
+- **`OpLogAppend`'s "log and clear the redo log" is now `(*Repo).AppendOp`**,
+  shared with `offer`, which had its own inline copy. Behaviour is
+  unchanged; `Redo` deliberately does not go through it, because re-applying
+  an undone operation must not clear the redo log (the HolyC calls
+  `MetaOpLogAppend` directly for exactly that reason).
+- **`operation restore <index>` touches nothing but HEAD.** It reads the
+  operation at `index` (0-based, oldest first, the numbering `operation
+  history` prints) and writes that entry's `new` head. It does not pop, does
+  not append a new operation, and does not clear or alter the redo log -
+  `OpLogRestore`'s own note says reconciling an arbitrary restore with
+  undo/redo afterwards is out of scope. Pinned by
+  `TestOperationRestoreJumpsHeadAndLeavesBothLogsAlone`, which redoes across
+  a restore and checks the oplog length on both sides.
+- **Deviation: `PathNameFits`/`HGIT_MAX_SAFE_PATH_LEN` is not ported.** That
+  33-character ceiling is a RedSea/`FileWrite` limit on the full path string
+  (ADR 0003), not a property of hgit's own format, and `Paths.HC`'s current
+  version already reduced it to a check on `repo_path + ".m"` alone - the
+  path NAME no longer enters a filename at all. On a host filesystem the
+  limit does not exist, and enforcing it would reject every ordinary
+  absolute path. The name checks that remain are the HolyC's own
+  `HGIT_MAX_PATH_NAME` (empty or >= 64 bytes is `ErrBadPathName`) and the
+  metadata format's 255-byte record-name limit (`ErrNameTooLong`).
+- **`path new` writes an all-zero HEAD record** when the current path has
+  none, rather than leaving the new path headless - `MetaWriteHead` is
+  called unconditionally, so `Head(name)` on such a path returns ok with an
+  all-zero hash, exactly as `MetaReadHead` would. Mirrored deliberately
+  (`TestPathNewOnHeadlessCurrentWritesZeroHead`).
+- **`path close` leaves everything behind.** It removes only the
+  `PATH_DECLARED` record; the closed path's HEAD and operation-log records
+  stay in the metadata file, orphaned and unreachable (ADR 0012 decision 5).
+  It refuses `main` and an undeclared name, and closing the current path
+  switches current back to `main`.
+- **`export` and `import` are one copy in two directions** (`HgitCopyRepo`),
+  copying `<repo>` and `<repo>.m`. A missing source file is skipped
+  silently, so a repo never touched beyond `init` copies its object file
+  alone and still opens (`Meta` defaults to main/empty). The destination is
+  overwritten if it exists, and a stale destination `.m` is left in place
+  when the source has none - both are `CopyFileIfExists`'s own behaviour.
+  Deviation: a real I/O error is returned rather than ignored, and the
+  writes go through the same atomic temp-file-plus-rename `Save` uses.
+
+Error tokens (`internal/cli/serial.go`). The path, undo/redo and operation
+commands print their `DISPATCH_*` line inline in `Hgit.HC`'s own branch, so
+unlike `SerialCheck`/`SerialHistory` these formatters include it - that is
+what the fixture segments contain.
+
+| sentinel | token |
+| --- | --- |
+| `ErrBadPathName`, `ErrPathExists`, `ErrNameTooLong` (from `PathNew`) | `DISPATCH_ERR path_new_failed <name>` |
+| `ErrNoSuchPath` (from `PathGo`) | `DISPATCH_ERR path_go_failed <name>` |
+| `ErrCloseMain`, `ErrNoSuchPath` (from `PathClose`) | `DISPATCH_ERR path_close_failed <name>` |
+| `ErrNothingToUndo` | `DISPATCH_ERR nothing_to_undo` |
+| `ErrNothingToRedo` | `DISPATCH_ERR nothing_to_redo` |
+| `ErrBadOpIndex` | `DISPATCH_ERR operation_restore_failed <index>` |
+| empty operation log | `OPLOG_EMPTY` |
+| `meta.ErrMalformed` from a log entry | `OPLOG_ERR bad_entry` (native-only) |
+| copy I/O failure | `DISPATCH_ERR export_failed` / `import_failed` (native-only) |
+
+The HolyC collapses every `path new` failure reason into the one
+`path_new_failed` token (its functions return `Bool`), and the port keeps
+that: the distinct sentinels exist for callers, not for the serial log.
+
+**Fixture parity: `TFULL_CHECK_AFTER_UNDO`, `TFULL_OPHISTORY`,
+`TFULL_PATHLIST`, `TFULL_CHECK_EXPORTED` and `TFULL_CHECK_IMPORTED` all
+match** (`tests/ops_scenario_test.go`, with only `normalize`'s masking),
+including the exported repo's `objects=25` - the replay runs the regression
+from `init` through both offers, undo, redo, the feature path, the
+`correct` offering and the export/import pair.
+
 ## 2026-09-22: `diff` (task 12b)
 
 Ports `Diff.HC` (`DiffResolveTreeByHash`, `DiffPrintTreeChanges`, `HgitDiff`):

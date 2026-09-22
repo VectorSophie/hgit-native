@@ -10,6 +10,7 @@ import (
 
 	"github.com/VectorSophie/hgit-native/pkg/hgit/archive"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/check"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/meta"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/repo"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/status"
 )
@@ -210,4 +211,86 @@ func serialStatus(changes []status.Change, err error) string {
 	}
 	b.WriteString("STATUS_END\n")
 	return b.String()
+}
+
+// The path, undo/redo and operation commands print their dispatch line as
+// part of their own output (Hgit.HC does it inline in each branch, unlike
+// `history`/`check`/`status`, which print none), so these formatters carry
+// it too - that is what the fixture's own segments contain.
+
+// SerialPathList formats PathList()'s result as `path list` printed it.
+func SerialPathList(names []string) string {
+	var b strings.Builder
+	for _, n := range names {
+		fmt.Fprintf(&b, "PATH %s\n", n)
+	}
+	b.WriteString("DISPATCH_OK path_list\n")
+	return b.String()
+}
+
+// SerialPathNew, SerialPathGo and SerialPathClose format the three mutating
+// path sub-commands. Every failure reason collapses into one token, exactly
+// as the HolyC's Bool return does.
+func SerialPathNew(name string, err error) string { return serialPath("path_new", name, err) }
+
+func SerialPathGo(name string, err error) string { return serialPath("path_go", name, err) }
+
+func SerialPathClose(name string, err error) string { return serialPath("path_close", name, err) }
+
+func serialPath(cmd, name string, err error) string {
+	if err != nil {
+		return fmt.Sprintf("DISPATCH_ERR %s_failed %s\n", cmd, name)
+	}
+	return fmt.Sprintf("DISPATCH_OK %s %s\n", cmd, name)
+}
+
+// SerialUndo formats Undo()'s result.
+func SerialUndo(err error) string {
+	if err != nil {
+		return "DISPATCH_ERR nothing_to_undo\n"
+	}
+	return "DISPATCH_OK undo\n"
+}
+
+// SerialRedo formats Redo()'s result.
+func SerialRedo(err error) string {
+	if err != nil {
+		return "DISPATCH_ERR nothing_to_redo\n"
+	}
+	return "DISPATCH_OK redo\n"
+}
+
+// SerialOperationHistory formats OperationHistory()'s result as
+// `operation history` printed it: oldest first, hashes in full hex.
+func SerialOperationHistory(ops []meta.OpLogEntry, err error) string {
+	if err != nil { // native-only: an undecodable log entry
+		return "OPLOG_ERR bad_entry\nDISPATCH_OK operation_history\n"
+	}
+	if len(ops) == 0 {
+		return "OPLOG_EMPTY\nDISPATCH_OK operation_history\n"
+	}
+	var b strings.Builder
+	for i, op := range ops {
+		fmt.Fprintf(&b, "OP %d ts=%d prev=%s new=%s\n", i, op.Timestamp, op.Prev.Hex(), op.New.Hex())
+	}
+	b.WriteString("DISPATCH_OK operation_history\n")
+	return b.String()
+}
+
+// SerialOperationRestore formats OperationRestore()'s result.
+func SerialOperationRestore(index int, err error) string {
+	if err != nil {
+		return fmt.Sprintf("DISPATCH_ERR operation_restore_failed %d\n", index)
+	}
+	return fmt.Sprintf("DISPATCH_OK operation_restore %d\n", index)
+}
+
+// SerialCopyRepo formats `export`/`import`, which share one implementation
+// and differ only in the name they print. The HolyC always prints DISPATCH_OK
+// (its copy helper cannot report failure); a real I/O error is native-only.
+func SerialCopyRepo(cmd string, err error) string {
+	if err != nil {
+		return fmt.Sprintf("DISPATCH_ERR %s_failed\n", cmd)
+	}
+	return fmt.Sprintf("DISPATCH_OK %s\n", cmd)
 }

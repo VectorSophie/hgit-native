@@ -109,6 +109,14 @@ func TestConflictRoot(t *testing.T) {
 	if len(rep.Dangling) != 0 || rep.RefsBroken != 0 {
 		t.Fatalf("%+v", rep)
 	}
+	// Once `hgit resolve` writes a real resolution hash, nothing changes: the
+	// resolution is always one of the conflict object's own present sides, so
+	// it is already reachable through the conflict - no second root is needed,
+	// and the HolyC marks only the conflict hash too.
+	r.Meta.Set("main", meta.TagConflict, append(append(append([]byte{}, ch[:]...), 1), side[:]...))
+	if rep = Run(r); len(rep.Dangling) != 0 || rep.RefsBroken != 0 {
+		t.Fatalf("resolved conflict: %+v", rep)
+	}
 	// missing conflict object and missing side
 	r.Meta.Append("main", meta.TagConflict, append(make([]byte, 64), make([]byte, 65)...))
 	if rep = Run(r); rep.RefsBroken != 1 || rep.Broken[0].Kind != "conflict_object_missing" {

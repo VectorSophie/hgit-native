@@ -12,6 +12,7 @@ import (
 	"github.com/VectorSophie/hgit-native/pkg/hgit/check"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/merge"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/meta"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/object"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/repo"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/status"
 )
@@ -339,4 +340,133 @@ func SerialMerge(otherPath string, res merge.Result, err error) string {
 	fmt.Fprintf(&b, "MERGE_ABORTED conflicts=%d\n", len(res.Conflicts))
 	b.WriteString("MERGE_CONFLICTS_PERSISTED - see 'hgit conflicts', 'hgit resolve', 'hgit merge continue'/'hgit merge abort'\n")
 	return b.String()
+}
+
+// SerialConflicts formats Conflicts()'s result as HgitConflicts printed it:
+// the count, then one line per record with its 0-based index, resolution
+// state, kind and path, followed by the base/ours/theirs evidence (the first
+// 16 hex characters of each present side's hash) and, once resolved, how.
+func SerialConflicts(cs []merge.ConflictInfo, err error) string {
+	switch {
+	case errors.Is(err, merge.ErrNoMergeInProgress):
+		return "CONFLICTS_NONE\n"
+	case err != nil: // native-only: a malformed conflict record
+		return "CONFLICTS_ERR bad_record\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "CONFLICTS_COUNT %d\n", len(cs))
+	for _, c := range cs {
+		state := "UNRESOLVED"
+		if c.Resolved {
+			state = "RESOLVED"
+		}
+		// A record whose object is missing or malformed prints no kind and no
+		// path - `check`'s job to flag, not this listing's.
+		var kind byte
+		var path string
+		if c.Object != nil {
+			kind, path = c.Object.Kind, c.Object.Path
+		}
+		fmt.Fprintf(&b, "CONFLICT %d %s kind=%d %s\n", c.Index, state, kind, path)
+		if c.Object == nil {
+			continue
+		}
+		for _, s := range []struct {
+			name string
+			side object.Side
+		}{{"base", c.Object.Base}, {"ours", c.Object.Ours}, {"theirs", c.Object.Theirs}} {
+			if !s.side.Present {
+				fmt.Fprintf(&b, "  %s ABSENT\n", s.name)
+				continue
+			}
+			fmt.Fprintf(&b, "  %s type=%d mode=%d hash=%s\n", s.name, s.side.Type, s.side.Mode, s.side.Hash.Hex()[:16])
+		}
+		if c.Resolved {
+			fmt.Fprintf(&b, "  resolved: %s\n", resolutionWord(c))
+		}
+	}
+	return b.String()
+}
+
+// resolutionWord names what a resolved conflict resolved to. "custom" is
+// unreachable through `resolve`'s own two selectors and is kept only because
+// the HolyC keeps it.
+func resolutionWord(c merge.ConflictInfo) string {
+	switch {
+	case c.Resolution == archive.Hash{}:
+		return "deleted"
+	case c.Object.Ours.Present && c.Object.Ours.Hash == c.Resolution:
+		return "take-ours"
+	default:
+		return "take-theirs"
+	}
+}
+
+// SerialResolve formats Resolve()'s result as HgitResolve printed it.
+func SerialResolve(index int, path string, err error) string {
+	switch {
+	case errors.Is(err, merge.ErrNoMergeInProgress):
+		return "RESOLVE_ERR no_merge_in_progress\n"
+	case errors.Is(err, merge.ErrConflictNotFound):
+		return fmt.Sprintf("RESOLVE_ERR conflict_not_found %d\n", index)
+	case errors.Is(err, merge.ErrConflictObjectMissing):
+		return "RESOLVE_ERR conflict_object_missing\n"
+	case errors.Is(err, merge.ErrConflictMalformed):
+		return "RESOLVE_ERR conflict_object_malformed - see hgit check; 'hgit merge abort' recovers\n"
+	case errors.Is(err, merge.ErrUnknownSelector):
+		return "RESOLVE_ERR unknown_selector - use take-ours or take-theirs\n"
+	case err != nil: // native-only: a failed save
+		return "RESOLVE_ERR bad_object\n"
+	}
+	return fmt.Sprintf("RESOLVE_OK %d %s\n", index, path)
+}
+
+// SerialMergeContinue formats Continue()'s result as HgitMergeContinue
+// printed it: one notice per still-unresolved conflict, then the count, or
+// the ordinary MERGE_AUTO/MERGE_OK success report.
+func SerialMergeContinue(res merge.Result, err error) string {
+	var un *merge.UnresolvedError
+	switch {
+	case errors.Is(err, merge.ErrNoMergeInProgress):
+		return "MERGE_ERR no_merge_in_progress\n"
+	case errors.As(err, &un):
+		var b strings.Builder
+		for _, i := range un.Indices {
+			fmt.Fprintf(&b, "MERGE_ERR conflict_unresolved %d\n", i)
+		}
+		fmt.Fprintf(&b, "MERGE_ERR conflicts_still_unresolved count=%d\n", len(un.Indices))
+		return b.String()
+	case errors.Is(err, merge.ErrStillConflicted):
+		return "MERGE_ERR internal_still_conflicted_after_resolution\n"
+	}
+	return SerialMerge("", res, err)
+}
+
+// SerialMergeAbort formats Abort()'s result as HgitMergeAbort printed it.
+func SerialMergeAbort(err error) string {
+	switch {
+	case errors.Is(err, merge.ErrNoMergeInProgress):
+		return "MERGE_ERR no_merge_in_progress\n"
+	case err != nil: // native-only: a failed save
+		return "MERGE_ERR bad_object\n"
+	}
+	return "MERGE_ABORT_OK\n"
+}
+
+// SerialMergeBanner is the STATUS_MERGE_IN_PROGRESS line `status` and
+// `statustree` print before everything else while a merge is unresolved. It
+// lives here rather than in package status because it describes repository
+// metadata, not the working directory that package compares (see
+// docs/porting-notes.md).
+func SerialMergeBanner(cs []merge.ConflictInfo, err error) string {
+	if err != nil {
+		return ""
+	}
+	unresolved := 0
+	for _, c := range cs {
+		if !c.Resolved {
+			unresolved++
+		}
+	}
+	return fmt.Sprintf("STATUS_MERGE_IN_PROGRESS conflicts=%d unresolved=%d - see 'hgit conflicts'\n", len(cs), unresolved)
 }

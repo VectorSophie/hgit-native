@@ -1,0 +1,174 @@
+package tests
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/VectorSophie/hgit-native/internal/cli"
+	"github.com/VectorSophie/hgit-native/internal/testfix"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/archive"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/check"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/merge"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/meta"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/repo"
+	"github.com/VectorSophie/hgit-native/pkg/hgit/status"
+)
+
+func (f *mergeFx) conflicts() string {
+	f.t.Helper()
+	return cli.SerialConflicts(merge.Conflicts(f.open()))
+}
+
+func (f *mergeFx) resolve(index int, which string) string {
+	f.t.Helper()
+	path, err := merge.Resolve(f.open(), index, which)
+	return cli.SerialResolve(index, path, err)
+}
+
+func (f *mergeFx) mergeContinue() string {
+	f.t.Helper()
+	return cli.SerialMergeContinue(merge.Continue(f.open()))
+}
+
+func (f *mergeFx) mergeAbort() string {
+	f.t.Helper()
+	return cli.SerialMergeAbort(merge.Abort(f.open()))
+}
+
+// status is `hgit status`: the ADR 0016 merge banner first, then the
+// ordinary working-directory report.
+func (f *mergeFx) status() string {
+	f.t.Helper()
+	banner := cli.SerialMergeBanner(merge.Conflicts(f.open()))
+	changes, err := status.Status(f.open(), f.dir, f.mask)
+	return banner + cli.SerialStatus(changes, err)
+}
+
+// TestScenarioConflictAbortReplaysRegression replays the regression's own
+// TFULL_CONFLICT_ABORT repository (contract/tests/full-regression.hc lines
+// 335-354): one conflicting file, the in-progress-merge banner `status`
+// prints, then `merge abort` and an empty `conflicts`.
+//
+// The segment's leading DISPATCH_OK lines belong to `init`/`offer`/`path`,
+// whose serial output earlier tasks already cover, and its CONFLICTDOC_OK
+// line belongs to `conflictdoc` (v1.8.6), which is not ported - both are
+// dropped from the expectation here, and nothing else is.
+func TestScenarioConflictAbortReplaysRegression(t *testing.T) {
+	f := newConflictRepoB(t)
+
+	var got strings.Builder
+	got.WriteString(f.merge("cf"))
+	got.WriteString(f.status())
+	got.WriteString(f.mergeAbort())
+	got.WriteString(f.conflicts())
+
+	want := segment(t, testfix.ExpectedLog(t), "TFULL_CONFLICT_ABORT_BEGIN", "TFULL_CONFLICT_ABORT_END_MARKER")
+	want = dropLines(want, "DISPATCH_OK ", "CONFLICTDOC_OK ")
+	if normalize(trim(got.String())) != normalize(want) {
+		t.Fatalf("TFULL_CONFLICT_ABORT mismatch:\ngot:\n%s\nwant:\n%s", trim(got.String()), want)
+	}
+}
+
+// TestScenarioConflictMergeReplaysRegression replays TFULL_CONFLICT_MERGE
+// (contract/tests/full-regression.hc lines 325-333): the conflict listing
+// with its base/ours/theirs evidence, a refused `merge continue`, `resolve`,
+// a second `merge continue` that succeeds, `check`, and a `merge abort` with
+// nothing left to abort.
+//
+// That repository ALSO carries a rename (r.txt -> r2.txt) to exercise ADR
+// 0017's rename-aware merge, which is not ported yet (task 14b's own scope
+// note) - so this replay leaves the rename out of the repository and drops
+// the four rename-dependent lines plus the object count they inflate from the
+// expectation. Every conflict-lifecycle line of the segment is compared
+// exactly.
+func TestScenarioConflictMergeReplaysRegression(t *testing.T) {
+	f := newConflictRepoB(t)
+
+	var got strings.Builder
+	got.WriteString(f.merge("cf"))
+	got.WriteString(f.conflicts())
+	got.WriteString(f.mergeContinue())
+	got.WriteString(f.resolve(0, "take-theirs"))
+	got.WriteString(f.mergeContinue())
+	got.WriteString(f.check())
+	got.WriteString(f.mergeAbort())
+
+	want := segment(t, testfix.ExpectedLog(t), "TFULL_CONFLICT_MERGE_BEGIN", "TFULL_CONFLICT_MERGE_END_MARKER")
+	want = dropLines(want, "MERGE_AUTO ", "CHECK_OK ")
+	gotText := dropLines(trim(got.String()), "CHECK_OK ")
+	if normalize(gotText) != normalize(want) {
+		t.Fatalf("TFULL_CONFLICT_MERGE mismatch:\ngot:\n%s\nwant:\n%s", gotText, want)
+	}
+}
+
+// TestScenarioHardenReplaysRegression replays TFULL_HARDEN (lines 356-368) on
+// the very repository the abort scenario leaves behind: a hand-written
+// conflict record pointing at an object that does not exist, `check` on it,
+// `merge abort`, and `check` on an archive from a newer format version.
+func TestScenarioHardenReplaysRegression(t *testing.T) {
+	f := newConflictRepoB(t)
+	f.merge("cf")
+	f.mergeAbort()
+
+	r := f.open()
+	head, _ := r.Head("main")
+	var fake archive.Hash
+	for i := range fake {
+		fake[i] = 7
+	}
+	r.Meta.Set("main", meta.TagMergeState, meta.MergeState{Ours: head, Theirs: head, OtherPath: "cf"}.Encode())
+	r.Meta.Append("main", meta.TagConflict, meta.ConflictRecord{Conflict: fake}.Encode())
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	var got strings.Builder
+	got.WriteString(f.check())
+	got.WriteString(f.mergeAbort())
+
+	// An archive whose header says format version 9: this build reads up to 4.
+	newer := filepath.Join(f.dir, "TFConfNewer.hgs")
+	if err := os.WriteFile(newer, archive.Header{Version: 9}.Marshal(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := repo.Open(newer)
+	got.WriteString(cli.SerialCheck(check.Report{}, err))
+
+	wantSegment(t, got.String(), "TFULL_HARDEN_BEGIN", "TFULL_HARDEN_END_MARKER")
+}
+
+// newConflictRepoB builds the regression's TFConfRepoB.hgs: one file, edited
+// differently on main and on cf.
+func newConflictRepoB(t *testing.T) *mergeFx {
+	t.Helper()
+	f := newMergeFx(t, "TFConfRepoB.hgs", "*.txt")
+	f.write("c.txt", "base_c\n")
+	f.offer("base")
+	f.pathNew("cf")
+	f.pathGo("cf")
+	f.write("c.txt", "feat_c\n")
+	f.offer("cf_edit")
+	f.pathGo("main")
+	f.write("c.txt", "main_c\n")
+	f.offer("main_edit")
+	return f
+}
+
+// dropLines removes every line starting with one of the given prefixes.
+func dropLines(s string, prefixes ...string) string {
+	var kept []string
+	for _, line := range strings.Split(s, "\n") {
+		drop := false
+		for _, p := range prefixes {
+			if strings.HasPrefix(line, p) {
+				drop = true
+			}
+		}
+		if !drop {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}

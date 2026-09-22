@@ -4,6 +4,92 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-22: the conflict lifecycle (task 14c)
+
+Ports `Merge.HC`'s `HgitConflicts`, `HgitResolve`, `HgitMergeContinue` and
+`HgitMergeAbort` into `pkg/hgit/merge/lifecycle.go`: `Conflicts`, `Resolve`,
+`Continue` and `Abort`. The three-way walk task 14b wrote is now shared by
+`Merge` and `Continue` (`walk`), as is the commit tail (`finish`,
+`MergeFinishSuccess`), with a resolution table threaded through exactly as
+`MergeTreesRecursive`'s own `resolution_conflict_hashes`/`resolution_hashes`
+arguments thread it there.
+
+- **What `resolution_hash` stores**: the CHOSEN SIDE's own content hash, taken
+  straight out of the `OBJ_CONFLICT` evidence (`hash[side*64..]` in
+  `HgitResolve`), i.e. the blob (or tree) hash that side's tree entry pointed
+  at - not a hash of the conflict, not a new object. When the chosen side is
+  ABSENT, all 64 bytes stay zero, and that zero IS the resolution: "resolve to
+  deletion". `Continue` omits the entry entirely for a zero resolution, takes
+  ours' entry whole when ours is present and its content hash equals the
+  resolution, and takes theirs' entry whole otherwise - the same three-way
+  branch `MergeTreesRecursive` uses. The resolved side is taken with its OWN
+  mode, not the three-way winning mode the conflict made meaningless, and a
+  `KindType` resolution writes no attrs entry at all.
+- **`resolve` marks only the record.** No object is written and no tree is
+  built; the merged tree is rebuilt from scratch at `merge continue` time.
+  Bounds are checked, a bad selector is refused, and re-resolving is ALLOWED -
+  the HolyC has no already-resolved check, and `MetaConflictSetResolved`
+  deliberately rewrites the record IN PLACE so the index `conflicts` printed
+  stays stable. Ported as-is, pinned by `TestResolveAgainOverwritesInPlace`.
+- **Error precedence in `resolve`** is the HolyC's own order: no merge in
+  progress, then index out of range, then missing object, then malformed
+  object, and only then the selector check - so `resolve <bad-index> nonsense`
+  reports the index, not the selector.
+- **`merge continue`** re-derives the base with `FindMergeBase` (the merge
+  state deliberately does not store it: the object graph only grows, so it is
+  deterministic), rebuilds the FULL tree, writes the two-parent commit (ours
+  then theirs), appends the oplog entry, clears the redo log, moves HEAD, and
+  only then clears the in-progress state. The commit message carries the
+  HolyC's v1.8.4 provenance suffix, `" [resolved <path>=ours|theirs|deleted]"`,
+  including both of its length caps (150/170) and the 254-byte message cap.
+- **`merge abort` clears the metadata and nothing else**, confirmed against
+  the HolyC directly: `HgitMergeAbort` is four lines - the in-progress check,
+  `MetaMergeStateClear`, and the notice. It never touches HEAD, the oplog, the
+  archive or the working directory, because a conflicting merge never touched
+  them either; that is exactly why "restores the EXACT pre-merge state" needs
+  no restoration logic. `MetaMergeStateClear` itself clears BOTH the
+  merge-state record and every conflict record for that path, in that order,
+  and is the same call `merge continue` uses on success.
+- **`OBJ_CONFLICT` objects are never deleted** by either ending, so `check`
+  reports them dangling afterwards - the ADR's own accepted tradeoff, asserted
+  in both the unit tests and the fixture replays.
+- **`check` needs no new root for resolutions.** A resolution hash is always
+  one of the conflict object's own present sides, and `CheckMarkReachable`
+  already follows those, so marking the conflict hash alone (which `Check.HC`
+  does, and task 8 ported) keeps a resolved conflict's content reachable.
+  `TestConflictRoot` now covers a record with a real resolution hash.
+- **`STATUS_MERGE_IN_PROGRESS` lives in `internal/cli`**, as
+  `SerialMergeBanner`, not in `pkg/hgit/status`. The line reports repository
+  metadata (the merge state and conflict records), not the working-directory
+  comparison that package exists to do, and `HgitStatus`/`HgitStatusTree`
+  print it from a block that is purely a preamble to their own work. Keeping
+  it in the command layer leaves both status packages and their task 12a tests
+  untouched, and `status` and `statustree` compose it the same way.
+- **New tokens**: `CONFLICTS_NONE`, `CONFLICTS_COUNT`/`CONFLICT` and its side
+  lines, `RESOLVE_OK`, `RESOLVE_ERR no_merge_in_progress` /
+  `conflict_not_found <i>` / `conflict_object_missing` /
+  `conflict_object_malformed` / `unknown_selector`, `MERGE_ERR
+  no_merge_in_progress`, `MERGE_ERR conflict_unresolved <i>`, `MERGE_ERR
+  conflicts_still_unresolved count=N`, `MERGE_ERR
+  internal_still_conflicted_after_resolution`, `MERGE_ABORT_OK`,
+  `STATUS_MERGE_IN_PROGRESS`. Native-only: `CONFLICTS_ERR bad_record` (a
+  conflict record of the wrong length, which the HolyC reads by fixed offset
+  instead).
+- **Deviations**: (1) the HolyC's `unknown_selector` line echoes the offending
+  selector; ours does not, since the sentinel error does not carry it.
+  (2) `MERGE_ERR internal_still_conflicted_after_resolution` omits the HolyC's
+  `count=` suffix. (3) Metadata and archive are saved once, at the end,
+  instead of the HolyC's several `FileWrite`s - the same single-`Save`
+  convention every earlier task uses. (4) `TFULL_CONFLICT_MERGE` is replayed
+  without its rename (ADR 0017 rename-aware merge is not ported), so its four
+  `MERGE_AUTO renamed`/`took-theirs r2.txt` lines and the `CHECK_OK
+  objects=15` count they inflate are excluded from that one comparison; every
+  conflict-lifecycle line of the segment is compared exactly, and the
+  base/ours/theirs evidence hashes match TempleOS's own output byte for byte.
+  `TFULL_CONFLICT_ABORT` is replayed in full except its leading `DISPATCH_OK`
+  lines and its `CONFLICTDOC_OK` line (`conflictdoc`, v1.8.6, is not ported).
+  `TFULL_HARDEN` is replayed in full, including its object count.
+
 ## 2026-09-22: flat three-way merge (task 14b)
 
 Ports `Merge.HC`'s `HgitMerge` - the trivial cases, the flat three-way merge

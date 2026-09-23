@@ -27,11 +27,11 @@
   <a href="docs/adr/">ADRs</a>
 </p>
 
-> **Status: in development. Nothing here is released yet.** This repository
-> currently holds the design ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md))
-> and the pinned contract with the original hgit. The sections below describe
-> what hgit-native is being built to do; [`docs/STATUS.md`](docs/STATUS.md) says
-> exactly what exists today.
+> **Status: the port is implemented and its test suite passes; nothing is
+> released yet.** `go build ./cmd/hgit` builds a working binary, and the
+> full command-line regression against real TempleOS output passes end to
+> end. There is no GitHub release and no Homebrew/Chocolatey/apt listing.
+> [`docs/STATUS.md`](docs/STATUS.md) says exactly what exists today.
 
 ## What this is
 
@@ -53,7 +53,7 @@ to GitHub.
 
 ## The commands
 
-The target is full parity with hgit 1.8.9:
+Full parity with hgit 1.8.9:
 
 | Command | What it does |
 |---|---|

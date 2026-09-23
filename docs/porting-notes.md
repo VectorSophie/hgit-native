@@ -4,6 +4,44 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-23: fuzzing, CI, and the docs pass (task 17)
+
+Native `go test -fuzz` (stdlib, no new dependency) over every byte-level
+parser: `archive.Parse`, `object.DecodeTree`/`DecodeCommit`/`DecodeAttrs`/
+`DecodeConflict`, and `meta.Parse`. Each fuzz target's seed corpus comes
+from real bytes: `archive.FuzzParse` and `meta.FuzzParse` seed from whole
+`.hgs`/`.hgs.m` fixtures via `internal/testfix`; the four `object` targets
+seed from the actual tree/commit/attrs/conflict record content found by
+parsing every `.hgs` fixture with `archive.Parse` first. The invariant each
+target checks: parsing never panics, and whatever it accepts round-trips
+stably (decode, re-encode, re-decode, and the second decode's own re-encode
+must equal the first encode). Each of the five targets ran for 30s locally
+(`go test -fuzz=FuzzX -fuzztime=30s ./pkg/hgit/...`); combined, over 14
+million executions with no crasher and no round-trip failure. No `testdata/
+fuzz/` corpus was generated for any target, since Go only writes a fuzz
+target's on-disk seed corpus when a run finds a failing input to reproduce -
+none did.
+
+CI (`.github/workflows/ci.yml`) runs on `ubuntu-latest`, `macos-latest` and
+`windows-latest`: checkout with `submodules: recursive`, `go vet ./...`,
+`go build ./...`, `go test ./...`. On Windows, `core.autocrlf` is set to
+`true` with `git config --global` *before* the checkout step, not after -
+the setting controls line-ending conversion as git writes the working tree
+during checkout, so setting it afterward would not retroactively normalize
+files already on disk. Go 1.22 pinned via `actions/setup-go`, matching
+`go.mod`. The module is at the repository root with no subdirectory
+layout, so no special working-directory configuration is needed.
+
+Docs brought back in line with the actual, reviewed state through task 16:
+`docs/STATUS.md` no longer says "nothing is implemented yet" (it hadn't
+been touched since the design phase); `README.md`'s status callout and
+"target is full parity" language were written before any Go existed and
+are now corrected to say the port works, while still being honest that
+nothing is released, packaged, or published. `INSTALL.md` said `cmd/hgit`
+"does not exist yet"; it now gives the real `go build ./cmd/hgit` /
+`./hgit help` steps, still with no packaged channel. None of the docs claim
+a GitHub release or a package-manager listing, because none exists.
+
 ## 2026-09-23: the command line, and the full regression replay (task 16)
 
 `cmd/hgit` is a one-line `main` over `internal/cli.Run(args, stdout, stderr)`,

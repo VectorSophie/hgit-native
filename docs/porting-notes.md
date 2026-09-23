@@ -4,7 +4,48 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
-## 2026-09-23: fuzzing, CI, and the docs pass (task 17)
+## 2026-09-23: length limits and unsupported rule lines
+
+- **`meta.File.Marshal` refuses what it cannot encode.** A metadata record's
+  name and payload lengths are single bytes, so a field over 255 bytes used
+  to be written with a wrapped length and the repository no longer opened
+  (`meta: malformed`). `Marshal` now returns `([]byte, error)` and fails with
+  `meta.ErrFieldTooLong`; `Repo.Save` marshals the metadata before writing
+  either file, so a refusal leaves both files as they were. The format is
+  unchanged. Pinned by `TestMarshalRefusesOverLongFields` and
+  `TestSaveRefusesUnencodableMeta`.
+- **One path-name limit: 63 bytes.** `SetHead`, `PathGo` and merge's
+  conflict persistence now refuse a path name of `MaxPathName` (64) bytes or
+  more with `repo.ErrNameTooLong`, the same limit `PathNew` and the HolyC's
+  `HGIT_MAX_PATH_NAME` enforce. The library used to accept up to 255, which
+  let a caller create a path the CLI's own `path new` could not, and at that
+  length a `MERGE_STATE` record (two 64-byte hashes plus the other path's
+  name) no longer fits its one-byte payload length. At 63 bytes every record
+  that carries a path name fits. Any repository TempleOS writes already
+  stays within it.
+- **Deliberate, permanent deviation: unsupported rule lines are silent.** The
+  HolyC prints `IGNORE_UNSUPPORTED_LINE <line>` (Ignore.HC),
+  `ATTR_UNSUPPORTED <token>` and `ATTR_UNSUPPORTED_LINE <line>` (Attrs.HC)
+  while loading `.hgitignore`/`.hgitattributes`. This port never emits these
+  diagnostics: an unparseable ignore or attributes line, or an unknown
+  attribute token, is dropped and does nothing, and the lines around it
+  still apply. Emitting them would change the return shape of `offer`,
+  `offertree`, `status` and `statustree` and add serial tokens whose
+  position in the output no TempleOS recording shows. Pinned by
+  `TestUnsupportedRuleLinesAreSilentlyDropped` in `pkg/hgit/attrs`.
+- **Deliberate, format-forced exception: merge conflict paths are cut at 254
+  bytes.** `merge.fullName` cuts a conflict's full path to 254 bytes, as the
+  HolyC's `full_name` does, because the `OBJ_CONFLICT` format stores the path
+  length in one byte. Everywhere else the port refuses rather than truncates
+  (`diff` prints names whole, `offer` refuses a name over 255 bytes). Only a
+  conflict path over 254 bytes reaches this, and the cut is the HolyC's own
+  except in the one corner the "merge objects written in walk order" entry
+  below names.
+- **A seventh fuzz target**, `fossil.FuzzDeltaApply`: `DeltaApply` never
+  panics on arbitrary source and delta bytes, and is deterministic on what it
+  accepts. A 30-second run (about 3.2 million executions) found no crasher.
+
+## 2026-09-23: fuzzing, CI, and the docs pass
 
 Native `go test -fuzz` (stdlib, no new dependency) over every byte-level
 parser: `archive.Parse`, `object.DecodeTree`/`DecodeCommit`/`DecodeAttrs`/
@@ -32,7 +73,7 @@ files already on disk. Go 1.22 pinned via `actions/setup-go`, matching
 `go.mod`. The module is at the repository root with no subdirectory
 layout, so no special working-directory configuration is needed.
 
-Docs brought back in line with the actual, reviewed state through task 16:
+Docs brought back in line with the implemented state:
 `docs/STATUS.md` no longer says "nothing is implemented yet" (it hadn't
 been touched since the design phase); `README.md`'s status callout and
 "target is full parity" language were written before any Go existed and
@@ -42,7 +83,7 @@ nothing is released, packaged, or published. `INSTALL.md` said `cmd/hgit`
 `./hgit help` steps, still with no packaged channel. None of the docs claim
 a GitHub release or a package-manager listing, because none exists.
 
-## 2026-09-23: the command line, and the full regression replay (task 16)
+## 2026-09-23: the command line, and the full regression replay
 
 `cmd/hgit` is a one-line `main` over `internal/cli.Run(args, stdout, stderr)`,
 which ports `Hgit.HC`'s dispatch to real argv with the stdlib `flag` package.
@@ -64,16 +105,16 @@ The replay uses the real clock and random entity ids. The regression's
 `FileWrite`/`Del`/`DirMk` steps, its `TFULL_*` marker lines and the three raw
 metadata writes of `TFULL_HARDEN` (`MetaMergeStateWrite`,
 `MetaConflictAppend`, a version-9 header) are not commands and are done by
-the test itself. This closes the segments earlier tasks deferred:
+the test itself. This covers the segments older entries below list as
+deferred:
 `TFULL_MERGEMODE_DIFF`, every `DISPATCH_OK` line, `OFFER_IGNORED`, and the
 object count of `TFULL_CHECK_MERGED` (compared at the right moment now).
 Still not exercised by the regression, so covered by the dispatcher's unit
-tests only (`TestEveryCommandRoutes`): `revert`, `reconcile`, their tree
-variants, `path close` and `operation restore`.
+tests only (`TestEveryCommandRoutes`): `revert`, `reconcile`, `reverttree`, `reconciletree`, `path close`, `operation restore`.
 
 - **`--serial` is a global flag before the subcommand** (`hgit --serial
   offer ...`), hidden: neither `--help`, `hgit help` nor a flag error lists
-  it. Without it the output is human-readable (plain text, no colour yet)
+  it. Without it the output is human-readable (plain text, no colour)
   and errors go to stderr as `hgit: ...`; with it every command prints
   exactly the HolyC token stream on stdout, errors included.
 - **Exit codes**: 0 success; 1 the command ran and failed (missing
@@ -138,7 +179,7 @@ variants, `path close` and `operation restore`.
   most 31 bytes of the name, as `Hgit.HC`'s `U8 cmd[32]` does. `hgit` with no
   command is `help`, as `Hgit("")` is.
 
-## 2026-09-23: plain-text views, help, version and logo (task 15)
+## 2026-09-23: plain-text views, help, version and logo
 
 `graph`, `historydoc`, `reconciledoc`, `reconcileoverview` and `conflictdoc`
 live in `pkg/hgit/views` and return plain text; `help`, `version`, `logo` and
@@ -187,7 +228,9 @@ parity decision, only the information of the DolDoc documents is ported:
   ported implementation, and every ported command is listed
   (`TestHelpListsExactlyThePortedCommands`). There is no native dispatcher yet,
   so dispatch-level tokens such as `DISPATCH_ERR reconciledoc_bad_hex` belong
-  to the task that adds one.
+  to the dispatcher. *(Superseded - see the entry dated 2026-09-23, "the
+  command line, and the full regression replay", above: the dispatcher exists
+  and prints them.)*
 
 ## 2026-09-23: merge objects written in walk order, and only when kept
 
@@ -212,14 +255,14 @@ follows the walk's puts). Two bugs are closed by this:
 `fullName` gains a comment: only a prefix of 255+ bytes makes it cut one byte
 more than the HolyC, whose own 256-byte buffer already overflows there.
 
-## 2026-09-22: nested trees and rename-aware merge (task 14d)
+## 2026-09-22: nested trees and rename-aware merge
 
 Completes `Merge.HC`'s `MergeTreesRecursive` in `pkg/hgit/merge`: the tree
 branch (probe 100) and the per-level rename normalization
 (`MergeNormalizeSide`/`MergeFindEntityInTree`, ADR 0017). The walk is now a
 `walker` whose `level` calls itself one directory deeper; `Merge` and
-`Continue` share it exactly as before. This supersedes two 14b/14c entries
-below: `ErrNestedTree`/`MERGE_ERR nested_tree` is gone (the HolyC refuses no
+`Continue` share it exactly as before. This supersedes two older merge entries
+below (the flat three-way merge and the conflict lifecycle): `ErrNestedTree`/`MERGE_ERR nested_tree` is gone (the HolyC refuses no
 nested case, so nothing remains in its scope), and `TFULL_CONFLICT_MERGE` is
 now replayed with its rename and compared in full, object count included.
 
@@ -283,11 +326,11 @@ now replayed with its rename and compared in full, object count included.
   stays within 254 bytes; a subtree's prefix is that plus `/`. Conflict paths
   and `took-theirs`/`deleted` notices are full paths at every depth.
 
-## 2026-09-22: the conflict lifecycle (task 14c)
+## 2026-09-22: the conflict lifecycle
 
 Ports `Merge.HC`'s `HgitConflicts`, `HgitResolve`, `HgitMergeContinue` and
 `HgitMergeAbort` into `pkg/hgit/merge/lifecycle.go`: `Conflicts`, `Resolve`,
-`Continue` and `Abort`. The three-way walk task 14b wrote is now shared by
+`Continue` and `Abort`. The flat three-way walk (see the entry below) is now shared by
 `Merge` and `Continue` (`walk`), as is the commit tail (`finish`,
 `MergeFinishSuccess`), with a resolution table threaded through exactly as
 `MergeTreesRecursive`'s own `resolution_conflict_hashes`/`resolution_hashes`
@@ -335,14 +378,14 @@ arguments thread it there.
 - **`check` needs no new root for resolutions.** A resolution hash is always
   one of the conflict object's own present sides, and `CheckMarkReachable`
   already follows those, so marking the conflict hash alone (which `Check.HC`
-  does, and task 8 ported) keeps a resolved conflict's content reachable.
+  does, and `check.Run` ports) keeps a resolved conflict's content reachable.
   `TestConflictRoot` now covers a record with a real resolution hash.
 - **`STATUS_MERGE_IN_PROGRESS` lives in `internal/cli`**, as
   `SerialMergeBanner`, not in `pkg/hgit/status`. The line reports repository
   metadata (the merge state and conflict records), not the working-directory
   comparison that package exists to do, and `HgitStatus`/`HgitStatusTree`
   print it from a block that is purely a preamble to their own work. Keeping
-  it in the command layer leaves both status packages and their task 12a tests
+  it in the command layer leaves both status packages and their existing tests
   untouched, and `status` and `statustree` compose it the same way.
 - **New tokens**: `CONFLICTS_NONE`, `CONFLICTS_COUNT`/`CONFLICT` and its side
   lines, `RESOLVE_OK`, `RESOLVE_ERR no_merge_in_progress` /
@@ -369,7 +412,10 @@ arguments thread it there.
   omits the HolyC's
   `count=` suffix. (2) Metadata and archive are saved once, at the end,
   instead of the HolyC's several `FileWrite`s - the same single-`Save`
-  convention every earlier task uses. (3) `TFULL_CONFLICT_MERGE` is replayed
+  convention every other command in this port uses. (3) *(Superseded - see the entry dated 2026-09-22, "nested trees and
+  rename-aware merge", above, and the 2026-09-23 command-line entry: both
+  segments below are now replayed in full, and `conflictdoc` is ported.)*
+  `TFULL_CONFLICT_MERGE` is replayed
   without its rename (ADR 0017 rename-aware merge is not ported), so its four
   `MERGE_AUTO renamed`/`took-theirs r2.txt` lines and the `CHECK_OK
   objects=15` count they inflate are excluded from that one comparison; every
@@ -381,7 +427,7 @@ arguments thread it there.
   lines and its `CONFLICTDOC_OK` line (`conflictdoc`, v1.8.6, is not ported).
   `TFULL_HARDEN` is replayed in full, including its object count.
 
-## 2026-09-22: flat three-way merge (task 14b)
+## 2026-09-22: flat three-way merge
 
 Ports `Merge.HC`'s `HgitMerge` - the trivial cases, the flat three-way merge
 of content and of mode, and ADR 0016 conflict persistence - into
@@ -390,7 +436,7 @@ of content and of mode, and ADR 0016 conflict persistence - into
 does, so there is no `oursPath` argument. Not ported here: recursion into
 nested trees (`MergeTreesRecursive`'s tree branch), rename normalization
 (`MergeNormalizeSide`), and the lifecycle commands (`conflicts`, `resolve`,
-`merge continue`, `merge abort`), all later sub-pieces.
+`merge continue`, `merge abort`), all ported in the entries above.
 
 - **Ported exactly**: the decision table (identical or both absent -> ours;
   unchanged on theirs -> ours; unchanged on ours -> theirs; otherwise a
@@ -423,7 +469,9 @@ nested trees (`MergeTreesRecursive`'s tree branch), rename normalization
   The HolyC recurses; this port does not implement that yet and refuses rather
   than merging a tree by its hash alone, which would silently drop one side's
   nested edits. Native-only output with no HolyC counterpart; it disappears
-  when the recursive merge lands.
+  when the recursive merge lands. *(Superseded - see the entry dated
+  2026-09-22, "nested trees and rename-aware merge", above: the refusal is
+  gone.)*
 - **Deviation: typed errors instead of printed tokens.** `pkg/hgit` never
   prints, so every `MERGE_*` token lives in `cli.SerialMerge`, and the
   `MERGE_AUTO took-theirs`/`deleted` notices the HolyC prints mid-walk are
@@ -447,18 +495,20 @@ nested trees (`MergeTreesRecursive`'s tree branch), rename normalization
   `tests/merge_scenario_test.go`. `TFULL_CONFLICT_MERGE` and
   `TFULL_CONFLICT_ABORT` are deferred: they drive `conflicts`, `resolve`,
   `merge continue` and `merge abort`, and the first also exercises the
-  rename-aware merge - none of which exist yet.
+  rename-aware merge - none of which exist yet. *(Superseded - both are
+  replayed by the full command-line replay; see the 2026-09-23 command-line
+  entry above.)*
 - **Finding worth recording**: the merge repository's fixture shows an
   `OBJ_ATTRS` object per offer, because the regression's `FileWrite` lengths
   are one byte past each literal, so those files end in a NUL and are binary
   by detection. Replaying with the literal alone produces 14 objects, not 18.
 
-## 2026-09-22: merge-base (task 14a)
+## 2026-09-22: merge-base
 
 Ports `MergeBase.HC` (the FIXED, post-probe-109 version) into
 `pkg/hgit/mergebase`: `FindMergeBase(r *repo.Repo, a, b archive.Hash) (archive.Hash, bool, error)`.
-Does not port `Merge.HC` (the merge command itself); that is a later
-sub-piece.
+Does not port `Merge.HC` (the merge command itself); `pkg/hgit/merge` does
+(see the entries above).
 
 - **Algorithm ported exactly**: `collectAllAncestors` builds a's complete
   ancestor set via BFS over every parent edge (not just `parent[0]`),
@@ -504,15 +554,14 @@ sub-piece.
   depth/step limit was needed or added.
 - No scenario test drawn from `contract/tests/full-regression.hc`: its own
   merge-base computation only happens inside `Hgit("merge ...")`, i.e.
-  behind the merge command itself, which this sub-piece does not build.
-  Once the merge command lands, its own tests can exercise this package
-  end-to-end; for now the fixture-built unit tests above (linear chain, two
+  behind the merge command itself, which lives in `pkg/hgit/merge`. The
+  merge tests and the full command-line replay exercise this package end to
+  end, alongside the fixture-built unit tests above (linear chain, two
   branches from a root, fast-forward both directions, `a==b`, no common
   ancestor, probe 109's real merge-second-parent scenario, criss-cross,
-  malformed graph, a long chain proving BFS termination) are the only
-  coverage.
+  malformed graph, a long chain proving BFS termination).
 
-## 2026-09-22: named paths, undo/redo/operation log, export/import (task 13)
+## 2026-09-22: named paths, undo/redo/operation log, export/import
 
 Ports `Paths.HC`, `OpLog.HC` and `Portable.HC`. They live in
 `pkg/hgit/repo` as `ops.go`, not in a separate package: every one of these
@@ -548,6 +597,9 @@ package-level `Export`/`Import`.
   absolute path. The name checks that remain are the HolyC's own
   `HGIT_MAX_PATH_NAME` (empty or >= 64 bytes is `ErrBadPathName`) and the
   metadata format's 255-byte record-name limit (`ErrNameTooLong`).
+  *(Superseded - see the entry dated 2026-09-23, "length limits and
+  unsupported rule lines", above: `SetHead` and `PathGo` now use the same
+  63-byte limit.)*
 - **`path new` writes an all-zero HEAD record** when the current path has
   none, rather than leaving the new path headless - `MetaWriteHead` is
   called unconditionally, so `Head(name)` on such a path returns ok with an
@@ -595,7 +647,7 @@ including the exported repo's `objects=25` - the replay runs the regression
 from `init` through both offers, undo, redo, the feature path, the
 `correct` offering and the export/import pair.
 
-## 2026-09-22: `diff` (task 12b)
+## 2026-09-22: `diff`
 
 Ports `Diff.HC` (`DiffResolveTreeByHash`, `DiffPrintTreeChanges`, `HgitDiff`):
 one commit's tree against its first parent's, with the serial tokens in
@@ -649,15 +701,18 @@ one commit's tree against its first parent's, with the serial tokens in
   produced by `hgit merge`, and no merge command exists in this port yet. It
   is not faked - the merge-commit behaviour itself (first parent only, probe
   111) is covered by `TestDiffMergeCommitUsesFirstParentOnly`, which builds a
-  genuine two-parent commit object directly; the segment should be replayed
-  for real by whichever task ports merge.
+  genuine two-parent commit object directly; the segment is to be replayed
+  for real once merge is ported. *(Superseded - the full command-line replay
+  now covers `TFULL_MERGEMODE_DIFF`; see the 2026-09-23 command-line entry
+  above.)*
 
-## 2026-09-22: `status` and `statustree` (task 12a)
+## 2026-09-22: `status` and `statustree`
 
 Ports `Status.HC`'s `HgitStatus` (flat) and `StatusTreeWalk`/`HgitStatusTree`
 (recursive, ADR 0010) into `pkg/hgit/status`, with the exact serial tokens in
 `internal/cli/serial.go`'s `SerialStatus`/`SerialStatusTree`. `diff`
-(Diff.HC) is a later task; the `Change` type here is shaped for it to reuse.
+(Diff.HC) is ported separately (see the entry above); the `Change` type here
+is shaped for it to reuse.
 
 - **Byte-exact parity with three of the fixture's segments.**
   `tests/status_scenario_test.go` replays the regression natively up to
@@ -669,18 +724,20 @@ Ports `Status.HC`'s `HgitStatus` (flat) and `StatusTreeWalk`/`HgitStatusTree`
   prints STATUS_UNCHANGED; `TFULL_ATTRS_STATUS` proves STATUS_MODE_CHANGED
   fires independently of an unchanged content line. The `TFULL_STATUSTREE`
   segment carries a trailing `DISPATCH_OK statustree` line that belongs to the
-  (not-yet-built) CLI dispatcher, not to `HgitStatusTree` itself, so the test
-  strips it before comparing.
+  CLI dispatcher, not to `HgitStatusTree` itself, so the test strips it
+  before comparing.
 - **The ADR 0016 merge-in-progress check (`STATUS_MERGE_IN_PROGRESS`) is
-  deliberately not ported here.** `Status.HC` prints it from
+  deliberately not ported here.** *(Superseded - see the entry dated
+  2026-09-22, "the conflict lifecycle", above: it is ported in
+  `internal/cli` as `SerialMergeBanner`.)* `Status.HC` prints it from
   `MetaMergeStateExists`/`MetaConflictCount`/`MetaConflictGetAt`, but this
   codebase has no writer for the per-conflict "resolved" flag those read
   (`meta.TagConflict`'s payload today is just a hash - see
   `pkg/hgit/check/check.go`'s own reader). Guessing that on-disk shape here,
-  ahead of the merge task that actually defines it, would risk a format this
+  before merge itself was ported, would risk a format this
   port would then have to keep. `TFULL_CONFLICT_ABORT`'s status line (the only
-  fixture segment that exercises this) is deferred to whichever task builds
-  merge/resolve.
+  fixture segment that exercises this) is deferred until merge/resolve
+  exist.
 - **`MaxFuzzyRenameBytes = 512`, matching Status.HC's fixed 512-byte
   fuzzy-rename slot exactly.** A NEW-on-disk candidate is eligible for the
   fuzzy-rename pass only when its own content is at most 511 bytes
@@ -692,7 +749,9 @@ Ports `Status.HC`'s `HgitStatus` (flat) and `StatusTreeWalk`/`HgitStatusTree`
   `new_contents[disk_count*512+512]` slot array only exists for that side.
   `pkg/hgit/offer`'s own fuzzy rename has no ceiling at all (probe 84's own
   finding, already documented there) - this is a real, deliberate parity
-  choice with status/diff alone, not a general project rule.
+  choice with status/diff alone, not a general project rule. *(Superseded
+  for `diff` - see the entry dated 2026-09-22, "`diff`", above: `diff` has
+  no ceiling; only `status`/`statustree` do.)*
 - **Pass 2 (DELETED) walks the whole HEAD tree, not just what the mask
   matched.** `Status.HC`'s deletion pass iterates every entry of
   `tree_content` unconditionally, checking existence under `dir_prefix` -
@@ -791,8 +850,7 @@ Ports `Status.HC`'s `HgitStatus` (flat) and `StatusTreeWalk`/`HgitStatusTree`
   a working directory is a more everyday way to hit it than a permissions
   error. Not exercised by any fixture or test; `Status.HC`'s own
   `HgitFileRead` has no distinct behaviour for these either.
-- **Small carry-overs done alongside this task** (per the review that found
-  them): an offer-level test proving a flat `Offer` hides a plain FILE named
+- **Also in this change**: an offer-level test proving a flat `Offer` hides a plain FILE named
   `build` against a `build/` `.hgitignore` rule, the same way a real directory
   of that name is hidden (`TestFlatOfferIgnoresPlainFileMatchingDirPattern`);
   four `offertree` tests for previously-untested branches - a tracked file
@@ -810,7 +868,7 @@ Ports `Status.HC`'s `HgitStatus` (flat) and `StatusTreeWalk`/`HgitStatusTree`
   the caller's `*repo.Repo` mutated and must not be reused; the duplicate
   `{"build", true}` case in `ignore_test.go` is gone (see above).
 
-## 2026-09-22: the recursive offertree and the relation wrappers (task 11c)
+## 2026-09-22: the recursive offertree and the relation wrappers
 
 Ports `Offer.HC`'s `TreeBuildRecursive`, `HgitOfferTreeWithRelation` and
 `HgitOfferTree` (ADR 0010), and the relation dispatch of `Hgit.HC`'s
@@ -857,10 +915,12 @@ Ports `Offer.HC`'s `TreeBuildRecursive`, `HgitOfferTreeWithRelation` and
   DIR_CONTENTS pattern is `StrCmp(pattern, rel_dir)`. That is exactly
   `ignore.Pattern.MatchLast`, so `ignore.Rules.IgnoredLast` was added and both
   `Offer` and `OfferTree` use it. This closes the flat path's previous
-  divergence, raised in 11b's review: `Rules.Ignored(name, false)` did not hide
+  divergence: `Rules.Ignored(name, false)` did not hide
   a plain *file* named exactly like a directory rule, where the HolyC does.
   `Rules.Ignored(relPath, isDir)` is kept unchanged for status and diff, which
-  do match against whole paths.
+  do match against whole paths. *(Superseded - see the entry dated
+  2026-09-22, "`status` and `statustree`", above: `Ignored` is deleted and
+  status uses `IgnoredLast` too.)*
 - **A tracked name is never hidden, at directory level too.** The HolyC
   computes `name_was_tracked` from the parent tree before consulting the ignore
   rules, and that flag is deliberately independent of the type-mismatch reset
@@ -888,7 +948,7 @@ Ports `Offer.HC`'s `TreeBuildRecursive`, `HgitOfferTreeWithRelation` and
   `Options.Relation` set to `object.RelCorrects`/`RelReverts`/`RelReconciles`
   and `Options.RelationTarget` naming the commit, and the `...tree` variants
   are the same options passed to `offer.OfferTree`. No wrapper functions were
-  added. Token-to-error mapping for the later CLI task:
+  added. Token-to-error mapping used by the command-line dispatcher:
   `DISPATCH_ERR bad_hash <hex>` is `archive.ParseHex`'s error, and
   `DISPATCH_ERR bad_entity_id <hex>` is the new `archive.ParseEntityID`'s.
   `ParseEntityID` takes exactly 16 hex digits (`Hex.HC`'s `HexToU64` reads a
@@ -906,8 +966,8 @@ Ports `Offer.HC`'s `TreeBuildRecursive`, `HgitOfferTreeWithRelation` and
   loop calls `HgitFileRead` *before* its ignore check and throws the bytes
   away; this port checks first. Observable only in that an unreadable ignored
   file no longer fails the offer.
-- **`MaxMessageLen = 255`, restated precisely** (the 11b comment was
-  imprecise). The format stores the message length in a **U32**, so the field
+- **`MaxMessageLen = 255`, restated precisely** (an earlier code comment
+  was imprecise). The format stores the message length in a **U32**, so the field
   is not the constraint. The HolyC's constraint is its fixed
   `U8 commit_content[512]`: fixed fields cost 64+1+8+4+1+1 = 79 bytes for a
   root offering with no relation and no attrs, and
@@ -924,13 +984,13 @@ Ports `Offer.HC`'s `TreeBuildRecursive`, `HgitOfferTreeWithRelation` and
   failure between them leaves the new objects on disk with HEAD not moved,
   which `check` reports as dangling. Recoverable, not atomic.
 
-## 2026-09-22: init, working-directory listing and the flat offer (task 11b)
+## 2026-09-22: init, working-directory listing and the flat offer
 
 Ports `Init.HC` and `Offer.HC`'s flat path (`HgitOffer`,
 `HgitOfferWithRelation`, `OfferFindFuzzyRename`) plus the `find_mask`
-enumeration from `WorkDir.HC`. The recursive `offertree` path is not ported
-yet; `offer.CarryEntityID`/`offer.FindFuzzyRename` are shared helpers it can
-reuse per directory level.
+enumeration from `WorkDir.HC`. The recursive `offertree` path is ported separately (see the entry above);
+`offer.CarryEntityID`/`offer.FindFuzzyRename` are shared helpers it reuses per
+directory level.
 
 - **Byte-exact blob parity achieved.** The regression's
   `FileWrite(name, <95-char literal>, 97)` stores 97 bytes: the literal, its
@@ -949,7 +1009,9 @@ reuse per directory level.
   512-byte slot and give a larger file content length 0 (similarity 0), and
   `Diff.HC` ~329 scores against those same slots. The status/statustree/diff
   port **must** mirror that ceiling as a named constant in its own package, or
-  it will report renames the HolyC does not. Offer must not.
+  it will report renames the HolyC does not. Offer must not. *(Superseded for
+  `diff` - see the entry dated 2026-09-22, "`diff`", above: `Diff.HC` has no
+  such slots, so `diff` has no ceiling; only `status`/`statustree` do.)*
 - **Cost of the unbounded scan.** `fossil`'s longest-common-substring search is
   O(n*m*min(n,m)) worst case, and offer runs it once per (parent-tree blob x
   new file that matched neither by name nor by hash) pair - unbounded, exactly
@@ -1012,7 +1074,7 @@ reuse per directory level.
   that entry's count is masked, explicitly and with a reason.
 
 Tokens the HolyC prints, and what the Go returns instead (`pkg/hgit/...` never
-prints; the CLI task maps these back):
+prints; `internal/cli` maps these back):
 
 | HolyC output | Go |
 | --- | --- |
@@ -1025,7 +1087,7 @@ prints; the CLI task maps these back):
 | (unencodable name) | `offer.ErrNameTooLong` |
 | (no equivalent) | `offer.ErrEntityID`, `repo.ErrNameTooLong` from `SetHead`, and any I/O error |
 
-## 2026-09-22: fossil delta and similarity (task 11a)
+## 2026-09-22: fossil delta and similarity
 
 - **Rename threshold**: Offer.HC/Status.HC/Diff.HC accept a candidate when
   `sim >= FOSSIL_RENAME_SIMILARITY_THRESHOLD` (50), best score wins. Exported
@@ -1039,11 +1101,11 @@ prints; the CLI task maps these back):
   target (an empty source scores 0 too, identical non-empty inputs 100).
   Cost is O(n*m*min(n,m)) worst case on repetitive content; the Go has no size ceiling and does not
   truncate, so very large files are slow rather than skipped.
-- **Fuzzy-rename buffer ceiling**: the HolyC's caller (Status.HC lines ~172-181, 251) only buffers files of 512 bytes or less for fuzzy rename detection; the status/diff port must mirror that ceiling as a named constant. Narrowed by the 11b entry above: `Offer.HC` has no such ceiling, so `offer` must not either.
+- **Fuzzy-rename buffer ceiling**: the HolyC's caller (Status.HC lines ~172-181, 251) only buffers files of 512 bytes or less for fuzzy rename detection; the status/diff port must mirror that ceiling as a named constant. Narrowed by the 2026-09-22 flat-offer entry above: `Offer.HC` has no such ceiling, so `offer` must not either. *(Superseded for `diff` - see the entry dated 2026-09-22, "`diff`", above: `diff` has no ceiling; only `status`/`statustree` do.)*
 - **Ceilings live in callers, not Fossil.HC**: the HolyC Fossil functions have
   none; Status.HC buffers fuzzy-rename candidates in 512-byte slots and gives a
-  larger file content length 0 (similarity 0). The later offer/status ports
-  must decide whether to mirror that; nothing here does.
+  larger file content length 0 (similarity 0). The offer and status ports
+  decide whether to mirror that (see their entries above); nothing here does.
 - **Empty target (deviation)**: the HolyC maker emits `0\n0:0;`, which its own
   applier rejects (no segment loop runs, then `:` is read where `;` belongs).
   Go emits no segment for an empty literal: `0\n0;`, which round-trips.
@@ -1057,7 +1119,7 @@ prints; the CLI task maps these back):
 - **PutInt of a negative number** returns an empty slice, as the HolyC does;
   callers pass lengths and offsets only.
 
-## 2026-09-21: ignore and attrs matchers (task 9)
+## 2026-09-21: ignore and attrs matchers
 
 - **`*` never meets `/`**: matching is on the basename (name patterns) so the
   question does not arise; glob is the HolyC one (`*` = any run, nothing else
@@ -1065,7 +1127,10 @@ prints; the CLI task maps these back):
 - **Ignore: dir pattern needs `isDir`** (deviation): the HolyC compared names
   with no dir/file distinction. `Ignored("build", false)` is false here. A dir
   pattern also matches any ancestor component so files under `build/` report
-  ignored (the HolyC relied on the caller not descending).
+  ignored (the HolyC relied on the caller not descending). *(Superseded - see
+  the entries dated 2026-09-22 on the recursive offertree and on `status`
+  above: every caller uses `IgnoredLast`, the HolyC's own dir/file-agnostic
+  last-component match, and `Ignored` is deleted.)*
 - **Caller contract for ignore**: the caller knows `isDir`, never descends
   into an ignored directory, and checks tracking first. A negation that would
   re-include a file inside an ignored directory is never evaluated by the
@@ -1085,16 +1150,20 @@ prints; the CLI task maps these back):
   `binary ` (unknown) and the rule is dropped.
 - **Unsupported lines are skipped silently** (slash-containing non-`/`,`/*`
   patterns, 256+ byte patterns, empty after `!`); the HolyC also printed
-  `IGNORE_UNSUPPORTED_LINE`/`ATTR_UNSUPPORTED*`; packages never print, so the
-  caller-facing diagnostics are not produced here yet.
+  `IGNORE_UNSUPPORTED_LINE`/`ATTR_UNSUPPORTED*`. This port never emits those
+  diagnostics (see the entry dated 2026-09-23, "length limits and unsupported
+  rule lines", above).
 - **`Mode` returns rule-derived bits only**; `explicit` means a rule set
   text/binary. Caller ORs `ModeBinary` when `!explicit && DetectBinary`.
   Attrs have no negation; `!` is a literal pattern character.
 - Attrs reuse `ignore.ParsePattern`/`Pattern.Match` (exported for that).
+  *(Superseded - attrs use `ignore.ParsePattern` and `Pattern.MatchLast`;
+  `Match` is now the unexported `match`, see the entry dated 2026-09-22,
+  "`status` and `statustree`", above.)*
 
-## 2026-09-21: check (task 8)
+## 2026-09-21: check
 
-- **Roots follow Check.HC, not the brief.** Roots are every declared path's
+- **Roots follow Check.HC.** Roots are every declared path's
   HEAD (plus main) and every META_TAG_CONFLICT object of a path with a merge
   state. The in-progress merge's ours/theirs heads and the resolution hash are
   not roots in the HolyC (they are HEADs / reachable through the conflict
@@ -1112,10 +1181,10 @@ prints; the CLI task maps these back):
   merged, ignore, attrs, mergemode) matched their expected.log segments
   exactly, so no mid-scenario mismatch was found. CHECK_BEFORE/AFTER_UNDO, the
   conflict-merge and HARDEN broken-ref segments need mid-scenario state and
-  are left to the replay task; the conflict-root and missing-conflict cases
+  are covered by the full command-line replay (pillar B); the conflict-root and missing-conflict cases
   are covered by in-memory unit tests.
 
-## 2026-09-21: repo, history, see (task 7)
+## 2026-09-21: repo, history, see
 
 - **Index is a map.** `Repo` indexes records with `map[Hash]int` (first
   occurrence wins, as the linear scan did); the unwired HolyC hash table is not
@@ -1134,7 +1203,10 @@ prints; the CLI task maps these back):
   Windows rename onto an open file fails, the error is returned, untried.
 - **`SetHead` returns `ErrNameTooLong`** for names over 255 bytes (HolyC caps
   path names at 63 at creation). `meta.File.Set/Append` still wrap silently on
-  names or payloads over 255 bytes; callers must check first.
+  names or payloads over 255 bytes; callers must check first. *(Superseded -
+  see the entry dated 2026-09-23, "length limits and unsupported rule
+  lines", above: `SetHead` now enforces 63 bytes and `meta.File.Marshal`
+  refuses an over-length field.)*
 - **`HISTORY_ERR bad_object` is a native-only token**: emitted when a commit
   object fails to decode (the HolyC has no such state), with no `HISTORY_END`.
 - **`Save` does not fsync** the temp file before renaming. A crash between the
@@ -1145,14 +1217,14 @@ prints; the CLI task maps these back):
 ## 2026-09-21: known before the port starts
 
 - **Regression coverage gap.** The TempleOS regression scenario
-  (`contract/tests/full-regression.hc`) does not exercise `revert`,
-  `reconcile`, `path close` or `operation restore`. In the port these are
+  (`contract/tests/full-regression.hc`) does not exercise
+  `revert`, `reconcile`, `reverttree`, `reconciletree`, `path close`, `operation restore`. In the port these are
   covered by unit tests only; `revert` and `reconcile` share code with
   `correct`. Any divergence found later is the trigger to extend the scenario.
 - **`Fossil.HC` is a pure algorithm.** It implements Fossil's delta format and
   ports directly; it is not a TempleOS file layer.
 - **DolDoc views are not reproduced.** `historydoc`, `reconciledoc`,
-  `conflictdoc` and `graph` are ported as plain-text/ANSI output carrying the
+  `conflictdoc` and `graph` are ported as plain-text output carrying the
   same information, not the same rendering.
 - **Atomic writes are a native-side choice.** TempleOS wrote repo files
   directly; the port writes a temp file and renames. This does not change the

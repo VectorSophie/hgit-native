@@ -8,8 +8,9 @@ written in HolyC for TempleOS. Same commands, same on-disk format, no VM.
 ## What this is, and is not
 
 - **Is:** a standalone VCS. `hgit offer`, `hgit history`, `hgit merge`, ... in
-  a normal terminal, installable with `choco install hgit`, `brew install`,
-  `apt install`, or by downloading a binary.
+  a normal terminal. Today it is built from source (`go build ./cmd/hgit`);
+  Chocolatey, Homebrew and apt packages and downloadable binaries are
+  planned, not released.
 - **Is not:** a drop-in Git replacement. Repos are `.hgs` archives, not Git
   repos. There are no remotes; sharing is `export` / `import`. It cannot open
   Git repos or talk to GitHub. Git interop is a possible later phase, not v1.
@@ -38,8 +39,10 @@ pkg/hgit/            the library: all VCS logic, no printing, no terminal code
 internal/cli/        argument parsing, output modes, exit codes
 tests/               conformance tests (see Testing)
 docs/                this file, porting notes, per-OS install and quirks
-packaging/           Homebrew, Chocolatey, deb: ship the binary, no VM
 ```
+
+A `packaging/` directory (Homebrew, Chocolatey, deb: ship the binary, no VM)
+is planned and does not exist yet.
 
 `pkg/hgit` is a library on purpose. The CLI, a future TUI and a future GUI are
 thin front-ends over it, so a new front-end never touches format code or the
@@ -82,11 +85,11 @@ Scope of the first release is full parity with hgit 1.8.9, not a subset.
   format.
 - **Output.** hgit-on-TempleOS prints machine tokens (`DISPATCH_OK offer`,
   `STATUS_MODIFIED file`, ...). That token stream is the parity contract. The
-  CLI has a human mode (default: normal formatting, colour) and a hidden
+  CLI has a human mode (default: plain, readable text, no colour) and a hidden
   `--serial` mode that prints exactly the HolyC token stream for the
   conformance tests.
 - **DolDoc views** (`historydoc`, `reconciledoc`, `conflictdoc`, `graph`) are
-  TempleOS's rich-text format. They become plain-text/ANSI output carrying the
+  TempleOS's rich-text format. They become plain-text output carrying the
   same information; the rendering is not reproduced. They are the natural seed
   for a TUI.
 - **`Hgit("...")` string dispatch** becomes real subcommands with flags and
@@ -107,9 +110,10 @@ parity is checked three ways:
 Unit tests underneath: RFC 7693 BLAKE2b vectors, Fossil delta vectors, hex and
 varint round-trips.
 
-**Known gap.** The TempleOS regression does not exercise `revert`,
-`reconcile`, `path close` or `operation restore`. These are covered by unit
-tests only (`revert`/`reconcile` share code with `correct`). Any divergence
+**Known gap.** The TempleOS regression does not exercise `revert`, `reconcile`, `reverttree`, `reconciletree`, `path close`, `operation restore`.
+Each is wired into the command-line dispatcher and covered by unit tests
+only (`revert`/`reconcile` and their tree forms share code with `correct`
+and `correcttree`). Any divergence
 found later is the trigger to extend the scenario.
 
 **CI** runs Linux, macOS and Windows. Test loaders normalise line endings when
@@ -122,13 +126,19 @@ any exception named in `docs/porting-notes.md`.
 
 ## Error handling
 
-- The library returns typed, wrapped errors; the CLI maps them to exit codes.
+- The library returns package-prefixed sentinel errors (`repo: no such
+  path`, `meta: malformed`, ...) plus a few typed error structs that carry
+  data (`*repo.NotTypeError`, `*workdir.ReadError`,
+  `*status.NoOfferingsYetError`); errors are not wrapped with `%w`. The CLI
+  matches them with `errors.Is`/`errors.As` and maps them to exit codes.
   `--serial` prints the same `*_ERR` tokens as TempleOS, including the
   too-new-format message (`unsupported_format_version=9 (this build reads up to
   4)`), exercised by the `TFConfNewer` fixture.
 - Readers never panic on bad input. Every declared length is checked against
   the remaining bytes before allocation. Go native fuzzing runs against each
-  parser (archive, meta, delta, commit) with the invariant "error, never panic".
+  byte-level parser (`archive.Parse`, `meta.Parse`, the four `object`
+  decoders for trees, commits, attrs and conflicts, and `fossil.DeltaApply`)
+  with the invariant "error, never panic".
 - Writes are atomic (temp file + rename). A repo is two files, so the object
   file is written first (adding objects is harmless) and metadata second;
   `check` detects a mismatch after a crash. This is an implementation choice,

@@ -24,7 +24,9 @@ type AttrRules struct{ rules []rule }
 // "*.png binary " carries the unknown token "binary " and the rule is dropped.
 // Unknown tokens are ignored; a rule is kept only if at least one known token
 // (text, binary, executable) is present. No negation. Slash-containing
-// non-"/" "/*" patterns are skipped.
+// non-"/" "/*" patterns are skipped. The HolyC's ATTR_UNSUPPORTED and
+// ATTR_UNSUPPORTED_LINE diagnostics are never produced (see
+// docs/porting-notes.md).
 func ParseAttrs(src string) *AttrRules {
 	r := &AttrRules{}
 	for _, line := range strings.Split(src, "\n") {

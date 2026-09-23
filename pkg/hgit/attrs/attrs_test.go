@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/VectorSophie/hgit-native/pkg/hgit/ignore"
 	"github.com/VectorSophie/hgit-native/pkg/hgit/object"
 )
 
@@ -131,5 +132,25 @@ func TestFuzzNoPanic(t *testing.T) {
 	}
 	for i := 0; i < 5000; i++ {
 		_, _ = ParseAttrs(gen(40)).Mode(gen(12))
+	}
+}
+
+// Pins a deliberate deviation: the HolyC prints IGNORE_UNSUPPORTED_LINE,
+// ATTR_UNSUPPORTED and ATTR_UNSUPPORTED_LINE for rule lines it cannot use;
+// this port never emits them. An unusable line, or an unknown attribute
+// token, is dropped without a trace and the lines around it still apply.
+func TestUnsupportedRuleLinesAreSilentlyDropped(t *testing.T) {
+	ign := ignore.ParseIgnore("a/b\n*.tmp\n")
+	if ign.IgnoredLast("a/b") || ign.IgnoredLast("b") || !ign.IgnoredLast("x.tmp") {
+		t.Fatal("ignore: unsupported line must do nothing, the next line must still apply")
+	}
+	att := ParseAttrs("a/b binary\n*.x frobnicate\n*.y frobnicate,executable\n")
+	for _, p := range []string{"a/b", "b", "f.x"} {
+		if m, e := att.Mode(p); m != 0 || e {
+			t.Fatalf("attrs %s: mode %d explicit %v, want nothing", p, m, e)
+		}
+	}
+	if m, _ := att.Mode("f.y"); m != exec {
+		t.Fatalf("attrs f.y: mode %d, want executable (unknown token dropped, known one kept)", m)
 	}
 }

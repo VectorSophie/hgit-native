@@ -141,7 +141,9 @@ type Rules struct{ rules []rule }
 // ParseIgnore parses .hgitignore text. Lines end at "\n" with one trailing
 // "\r" removed; nothing else is trimmed (a trailing space is part of the
 // pattern). Empty lines and lines starting with "#" are skipped, a leading "!"
-// negates, and unsupported lines are skipped.
+// negates, and unsupported lines are skipped. Unlike the HolyC, which prints
+// IGNORE_UNSUPPORTED_LINE for them, this port reports nothing (see
+// docs/porting-notes.md).
 func ParseIgnore(src string) *Rules {
 	r := &Rules{}
 	for _, line := range strings.Split(src, "\n") {

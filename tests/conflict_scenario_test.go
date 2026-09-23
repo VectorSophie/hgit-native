@@ -73,19 +73,14 @@ func TestScenarioConflictAbortReplaysRegression(t *testing.T) {
 }
 
 // TestScenarioConflictMergeReplaysRegression replays TFULL_CONFLICT_MERGE
-// (contract/tests/full-regression.hc lines 325-333): the conflict listing
-// with its base/ours/theirs evidence, a refused `merge continue`, `resolve`,
-// a second `merge continue` that succeeds, `check`, and a `merge abort` with
-// nothing left to abort.
-//
-// That repository ALSO carries a rename (r.txt -> r2.txt) to exercise ADR
-// 0017's rename-aware merge, which is not ported yet (task 14b's own scope
-// note) - so this replay leaves the rename out of the repository and drops
-// the four rename-dependent lines plus the object count they inflate from the
-// expectation. Every conflict-lifecycle line of the segment is compared
-// exactly.
+// (contract/tests/full-regression.hc lines 309-333): a conflicting c.txt plus
+// r.txt renamed to r2.txt on main and edited on cf (ADR 0017's rename-aware
+// merge), the conflict listing with its base/ours/theirs evidence, a refused
+// `merge continue`, `resolve`, a second `merge continue` that succeeds,
+// `check`, and a `merge abort` with nothing left to abort. The whole segment
+// is compared, object count included.
 func TestScenarioConflictMergeReplaysRegression(t *testing.T) {
-	f := newConflictRepoB(t)
+	f := newConflictRepo(t)
 
 	var got strings.Builder
 	got.WriteString(f.merge("cf"))
@@ -97,8 +92,7 @@ func TestScenarioConflictMergeReplaysRegression(t *testing.T) {
 	got.WriteString(f.mergeAbort())
 
 	want := segment(t, testfix.ExpectedLog(t), "TFULL_CONFLICT_MERGE_BEGIN", "TFULL_CONFLICT_MERGE_END_MARKER")
-	want = dropLines(want, "MERGE_AUTO ", "CHECK_OK ")
-	gotText := dropLines(trim(got.String()), "CHECK_OK ")
+	gotText := trim(got.String())
 	if normalize(gotText) != normalize(want) {
 		t.Fatalf("TFULL_CONFLICT_MERGE mismatch:\ngot:\n%s\nwant:\n%s", gotText, want)
 	}
@@ -165,6 +159,28 @@ func TestScenarioHardenReplaysRegression(t *testing.T) {
 	got.WriteString(cli.SerialCheck(check.Report{}, err))
 
 	wantSegment(t, got.String(), "TFULL_HARDEN_BEGIN", "TFULL_HARDEN_END_MARKER")
+}
+
+// newConflictRepo builds the regression's TFConfRepo.hgs: c.txt edited
+// differently on main and on cf, and r.txt edited on cf but renamed to r2.txt
+// on main.
+func newConflictRepo(t *testing.T) *mergeFx {
+	t.Helper()
+	f := newMergeFx(t, "TFConfRepo.hgs", "*.txt")
+	f.write("c.txt", "base_c\n")
+	f.write("r.txt", "rename_me_content_long\n")
+	f.offer("base")
+	f.pathNew("cf")
+	f.pathGo("cf")
+	f.write("c.txt", "feat_c\n")
+	f.write("r.txt", "EDITED_me_content_long\n")
+	f.offer("cf_edits")
+	f.pathGo("main")
+	f.write("c.txt", "main_c\n")
+	f.remove("r.txt")
+	f.write("r2.txt", "rename_me_content_long\n")
+	f.offer("main_edits_and_renames")
+	return f
 }
 
 // newConflictRepoB builds the regression's TFConfRepoB.hgs: one file, edited

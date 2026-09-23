@@ -297,6 +297,24 @@ func SerialCopyRepo(cmd string, err error) string {
 	return fmt.Sprintf("DISPATCH_OK %s\n", cmd)
 }
 
+// autos formats the notices a merge walk prints inline, in walk order.
+func autos(as []merge.Auto) string {
+	var b strings.Builder
+	for _, a := range as {
+		switch a.Kind {
+		case merge.AutoTookTheirs:
+			fmt.Fprintf(&b, "MERGE_AUTO took-theirs %s\n", a.Path)
+		case merge.AutoDeleted:
+			fmt.Fprintf(&b, "MERGE_AUTO deleted %s\n", a.Path)
+		case merge.AutoRenamed:
+			fmt.Fprintf(&b, "MERGE_AUTO renamed %s -> %s\n", a.Path, a.NewName)
+		case merge.AutoRenameRefused:
+			fmt.Fprintf(&b, "MERGE_RENAME_RENAME %s\n", a.Path)
+		}
+	}
+	return b.String()
+}
+
 // SerialMerge formats a merge attempt as HgitMerge printed it. The
 // MERGE_AUTO notices come first, as they do there (printed during the walk),
 // then either MERGE_OK or the conflict report.
@@ -312,9 +330,9 @@ func SerialMerge(otherPath string, res merge.Result, err error) string {
 		return "MERGE_ERR no_common_ancestor\n"
 	case errors.Is(err, merge.ErrTreeNotFound):
 		return "MERGE_ERR tree_not_found\n"
-	case errors.Is(err, merge.ErrNestedTree):
-		// Native-only: the recursive merge is not ported yet.
-		return "MERGE_ERR nested_tree\n"
+	case errors.Is(err, merge.ErrAmbiguousRename):
+		// The notices the walk printed before the refusal was checked.
+		return autos(res.Autos) + "MERGE_REFUSED ambiguous_rename_rename - both sides renamed one file differently; nothing changed\n"
 	case err != nil: // native-only: a malformed object or a failed save
 		return "MERGE_ERR bad_object\n"
 	case res.UpToDate:
@@ -323,14 +341,7 @@ func SerialMerge(otherPath string, res merge.Result, err error) string {
 		return "MERGE_FASTFORWARD\n"
 	}
 	var b strings.Builder
-	for _, a := range res.Autos {
-		switch a.Kind {
-		case merge.AutoTookTheirs:
-			fmt.Fprintf(&b, "MERGE_AUTO took-theirs %s\n", a.Path)
-		case merge.AutoDeleted:
-			fmt.Fprintf(&b, "MERGE_AUTO deleted %s\n", a.Path)
-		}
-	}
+	b.WriteString(autos(res.Autos))
 	if len(res.Conflicts) == 0 {
 		return b.String() + "MERGE_OK\n"
 	}

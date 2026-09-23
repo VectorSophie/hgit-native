@@ -215,10 +215,10 @@ func Continue(r *repo.Repo) (Result, error) {
 		baseTree, baseAttrs = nil, nil
 	}
 
-	w, err := walk(sides{oursTree, theirsTree, baseTree, oursAttrs, theirsAttrs, baseAttrs}, resolutions)
-	if err != nil {
-		return res, err
-	}
+	// w.refused is not consulted: HgitMergeContinue never checks
+	// merge_rename_refused, and Merge refuses any rename/rename before a
+	// merge can be left in progress.
+	w := walk(r, sides{oursTree, theirsTree, baseTree, oursAttrs, theirsAttrs, baseAttrs}, resolutions)
 	if len(w.conflicts) > 0 {
 		return res, ErrStillConflicted
 	}

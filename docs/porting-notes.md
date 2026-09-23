@@ -4,6 +4,67 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-22: nested trees and rename-aware merge (task 14d)
+
+Completes `Merge.HC`'s `MergeTreesRecursive` in `pkg/hgit/merge`: the tree
+branch (probe 100) and the per-level rename normalization
+(`MergeNormalizeSide`/`MergeFindEntityInTree`, ADR 0017). The walk is now a
+`walker` whose `level` calls itself one directory deeper; `Merge` and
+`Continue` share it exactly as before. This supersedes two 14b/14c entries
+below: `ErrNestedTree`/`MERGE_ERR nested_tree` is gone (the HolyC refuses no
+nested case, so nothing remains in its scope), and `TFULL_CONFLICT_MERGE` is
+now replayed with its rename and compared in full, object count included.
+
+- **Normalization, ported condition by condition.** Per level, ours then
+  theirs, each against the OTHER side's un-normalized tree. A BLOB entry is
+  renamed back to its base name when: its own name is absent from the base;
+  exactly one base blob and exactly one blob on that side carry its entity
+  id; that side has nothing at the base name; and the other side either
+  still has the base name (any type) or carries the entity exactly once under
+  this same new name (the same rename on both sides - both sides normalize,
+  one mapping is kept, first wins). If the other side carries it exactly once
+  under a DIFFERENT name, that is rename/rename: `MERGE_RENAME_RENAME <base
+  name>` is noted, the entry is left as is, and the walk goes on. Any other
+  shape (other side deleted it, several carriers) normalizes nothing and
+  refuses nothing: rename-vs-delete keeps the renamed file, as ADR 0017 says.
+  Subtrees are never rename-normalized. The merged entry is written under the
+  new name, and every notice/conflict path uses it (`r2.txt`); the
+  `MERGE_AUTO renamed` notice itself prints prefix + base name `->` bare new
+  name, exactly as the HolyC format string does.
+- **Refusal happens after the whole walk, before anything is written.** The
+  HolyC sets the global `merge_rename_refused` and keeps merging - building
+  subtrees and conflict evidence in its scratch archive - then checks the flag
+  right after `MergeTreesRecursive` returns and before the conflict branch's
+  `FileWrite`, freeing the scratch archive. So nothing reaches disk: no
+  objects, no merge state, HEAD unchanged. The port does the same wasted work
+  in memory (subtrees are `Append`ed to the `*repo.Repo` during the walk) and
+  returns `ErrAmbiguousRename` without `Save`. Deviation: the caller's
+  in-memory `*repo.Repo` keeps those appended records; it must not be saved
+  afterwards (the CLI opens a fresh one per command). `Continue` does not
+  consult the flag, as `HgitMergeContinue` does not.
+- **Notice order is the HolyC's print order.** `MERGE_RENAME_RENAME` lines
+  are returned in `Result.Autos` (`AutoRenameRefused`) alongside
+  `AutoRenamed`/`AutoTookTheirs`/`AutoDeleted`, in walk order, and
+  `cli.SerialMerge` prints them before `MERGE_REFUSED
+  ambiguous_rename_rename - ...`, as the HolyC prints them before its refusal.
+- **Wasted-work tradeoff ported, not avoided**: a clean subtree is appended
+  the moment its recursion succeeds, so when a sibling conflicts the saved
+  archive holds that unreferenced subtree (reported dangling by `check`), per
+  `Merge.HC`'s header. `merge continue` re-walks and appends it again (no
+  dedup, as `ObjectPut`). Pinned by
+  `TestCleanSiblingSubtreeIsWrittenEvenWhenAnotherConflicts`.
+- **Finding, ported as is: a directory deleted on one side leaves an EMPTY
+  subtree in the merge.** Only the base and the other side have it, all agree
+  it is a tree, so it recurses; every entry inside is a clean deletion, the
+  recursion succeeds, and the (empty) merged subtree is written and entered
+  like any other. Pinned by `TestDeletedSubdirectoryLeavesAnEmptySubtree`.
+- **Deviation, from undefined behavior**: a subtree's entity id is ours',
+  else theirs'. When NEITHER has it (deleted on both sides) the HolyC reads an
+  uninitialized `theirs_entity_id`; the port writes 0.
+- **Paths**: `full_name` is prefix + merged name, the name cut so the whole
+  stays within 254 bytes; a subtree's prefix is that plus `/`. Conflict paths
+  and `took-theirs`/`deleted` notices are full paths at every depth.
+
 ## 2026-09-22: the conflict lifecycle (task 14c)
 
 Ports `Merge.HC`'s `HgitConflicts`, `HgitResolve`, `HgitMergeContinue` and

@@ -132,7 +132,7 @@ func TestScenarioStatusTreeReplaysRegression(t *testing.T) {
 	}
 	got := cli.SerialStatusTree(changes, err)
 	// The segment also carries a trailing "DISPATCH_OK statustree" - that is
-	// the CLI dispatcher's own line (a later task), not part of what
+	// the dispatcher's own line (internal/cli), not part of what
 	// HgitStatusTree itself printed, so it is stripped before comparing.
 	want := segment(t, testfix.ExpectedLog(t), "TFULL_STATUSTREE_BEGIN", "TFULL_STATUSTREE_END_MARKER")
 	want = strings.TrimSuffix(want, "\nDISPATCH_OK statustree")

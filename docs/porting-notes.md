@@ -4,6 +4,102 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-23: the command line, and the full regression replay (task 16)
+
+`cmd/hgit` is a one-line `main` over `internal/cli.Run(args, stdout, stderr)`,
+which ports `Hgit.HC`'s dispatch to real argv with the stdlib `flag` package.
+Every command `Hgit.HC` dispatches is a subcommand with the same name and
+argument order; `operation history|restore` and `path list|new|go|close` are
+two-word commands, and `merge continue|abort` are picked the way `Hgit.HC`
+picks them - a first argument of `continue` or `abort` is the sub-form,
+anything else is `merge <repo_path> <other_path_name>` (so a repository
+literally named `continue` must be written `./continue`).
+
+**Pillar B passes end to end.** `tests/full_replay_test.go` runs every step
+of `contract/tests/full-regression.hc` in order as a real `--serial` command
+line through `cli.Run`, and compares the whole output against the whole of
+`expected.log` - all 302 lines, nothing dropped or sliced. The only rewrites
+are the temporary directory standing in for `C:/Home/` and `normalize()`'s
+masking of timestamps, 128-hex hashes and 16-hex entity ids (the conflict
+evidence hashes, which that masking hides, are compared unmasked as well).
+The replay uses the real clock and random entity ids. The regression's
+`FileWrite`/`Del`/`DirMk` steps, its `TFULL_*` marker lines and the three raw
+metadata writes of `TFULL_HARDEN` (`MetaMergeStateWrite`,
+`MetaConflictAppend`, a version-9 header) are not commands and are done by
+the test itself. This closes the segments earlier tasks deferred:
+`TFULL_MERGEMODE_DIFF`, every `DISPATCH_OK` line, `OFFER_IGNORED`, and the
+object count of `TFULL_CHECK_MERGED` (compared at the right moment now).
+Still not exercised by the regression, so covered by the dispatcher's unit
+tests only (`TestEveryCommandRoutes`): `revert`, `reconcile`, their tree
+variants, `path close` and `operation restore`.
+
+- **`--serial` is a global flag before the subcommand** (`hgit --serial
+  offer ...`), hidden: neither `--help`, `hgit help` nor a flag error lists
+  it. Without it the output is human-readable (plain text, no colour yet)
+  and errors go to stderr as `hgit: ...`; with it every command prints
+  exactly the HolyC token stream on stdout, errors included.
+- **Exit codes**: 0 success; 1 the command ran and failed (missing
+  repository, unresolved merge, merge stopped by conflicts, corrupt archive
+  or broken references in `check`, any `*_ERR`); 2 the command line could
+  not be run (unknown command or sub-command, wrong argument count, an
+  unparsable hash, entity id or index, a bad flag). `status` with no
+  offerings yet, `history` of an empty path and `conflicts` with no merge
+  are not failures.
+- **Deviation: argument counts are enforced.** `ExtractToken` hands an
+  absent argument over as an empty string and ignores extra ones; the port
+  refuses both as a usage error (usage line on stderr, nothing on stdout,
+  exit 2). The trailing `<message>` of `offer`/`offertree` and the relation
+  commands is still everything after the fixed arguments, joined with single
+  spaces, and may be empty.
+- **Deviation: strict numbers and hashes.** `ParseI64` reads `abc` as 0 and
+  stops at the first non-digit; `resolve` and `operation restore` refuse
+  anything but a non-negative decimal instead. `ExtractToken` cut a hash at
+  128 and an entity id at 16 characters, so an over-long valid-hex token was
+  accepted by its prefix; `archive.ParseHex`/`ParseEntityID` refuse it
+  (`DISPATCH_ERR bad_hash`/`bad_entity_id`, exit 2).
+- **`status <repo_path> <find_mask> [<dir_prefix>]`**: the port lists and
+  checks one directory. It is `dir_prefix`, which `Status.HC` requires to be
+  the literal directory of `find_mask`; a `find_mask` with a different
+  directory is refused as a usage error, and `dir_prefix` may be left out
+  (the mask's own directory, or the working directory for a bare mask).
+  `offer`'s mask is split at its last separator the way `Offer.HC` finds its
+  `.hgitignore`/`.hgitattributes`: directory, then pattern.
+- **`OFFER_IGNORED`** prints the ignored file's absolute path, as TempleOS's
+  `full_name` is.
+- **DolDoc views take an optional destination**: `historydoc`,
+  `reconciledoc`, `reconcileoverview`, `graph` and `conflictdoc` write the
+  plain-text document to `<dest_file>` when it is given (the `<dest.DD>` of
+  `help`), and to stdout otherwise, followed in `--serial` mode by the
+  command's own line.
+- **Dispatch lines `Hgit.HC` prints unconditionally stay unconditional**:
+  `DISPATCH_OK offer|offertree|correct|...|statustree|operation_history|
+  path_list|historydoc|reconciledoc|reconcileoverview|graph` follow the
+  command's own error line too, as in TempleOS; the exit code says whether
+  it worked. Commands whose `Hgit.HC` branch reports a Bool (`undo`, `redo`,
+  `path new|go|close`, `operation restore`) collapse every failure, opening
+  the repository included, into their one `DISPATCH_ERR` token.
+- **Native-only open errors.** `see`, `diff`, `check`, `status`/`statustree`
+  and the merge commands print their HolyC `*_ERR not_a_repository` /
+  `bad_header` / too-new-format lines. The HolyC of `history`, `offer`,
+  `offertree`, `operation history`, `path list` and the views never checks
+  the file it reads; the port reports the same three cases under the
+  command's own prefix (`HISTORY_ERR`, `OFFER_ERR`, `OFFERTREE_ERR`,
+  `OPLOG_ERR`, `PATH_ERR`, `HISTORYDOC_ERR`, ...). `resolve` opens the
+  repository before looking for a merge, so a missing repository is
+  `MERGE_ERR not_a_repository` rather than `RESOLVE_ERR
+  no_merge_in_progress`. Offer failures the HolyC cannot have are
+  `OFFER_ERR`/`OFFERTREE_ERR` `message_too_long`, `name_too_long`,
+  `entity_id_unavailable`, `too_deep`, `unreadable <name>` or `io_error`; a
+  view that cannot be rendered or written is `<VIEW>_ERR bad_object` /
+  `write_failed`.
+- **`interactive` is not a command.** It is listed by the verbatim
+  `--serial` help (HgitHelp), but it only switches the TempleOS console's
+  screen echo and AutoComplete, so `hgit interactive` is
+  `DISPATCH_ERR unknown_command interactive` (exit 2). The human help does
+  not list it. `unknown_command` and the unknown sub-command tokens echo at
+  most 31 bytes of the name, as `Hgit.HC`'s `U8 cmd[32]` does. `hgit` with no
+  command is `help`, as `Hgit("")` is.
+
 ## 2026-09-23: plain-text views, help, version and logo (task 15)
 
 `graph`, `historydoc`, `reconciledoc`, `reconcileoverview` and `conflictdoc`

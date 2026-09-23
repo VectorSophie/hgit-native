@@ -52,7 +52,7 @@ func openFixture(t *testing.T, name string) *repo.Repo {
 
 // The fixture is the scenario's final state: `correct` later added a third
 // commit on main, so the mid-scenario TFULL_HISTORY segment (2 commits) is
-// the tail of the final history. The full replay is left to pillar B.
+// the tail of the final history. The full replay is full_replay_test.go.
 func TestScenarioHistory(t *testing.T) {
 	r := openFixture(t, "TFullRepo.hgs")
 	lines, err := r.History()

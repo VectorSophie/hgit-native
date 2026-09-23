@@ -53,20 +53,21 @@ func (f *mergeFx) status() string {
 // prints, then `merge abort` and an empty `conflicts`.
 //
 // The segment's leading DISPATCH_OK lines belong to `init`/`offer`/`path`,
-// whose serial output earlier tasks already cover, and its CONFLICTDOC_OK
-// line belongs to `conflictdoc` (v1.8.6), which is not ported - both are
-// dropped from the expectation here, and nothing else is.
+// whose serial output earlier tasks already cover - they are dropped from the
+// expectation here, and nothing else is: `conflictdoc`'s CONFLICTDOC_OK line
+// is compared too.
 func TestScenarioConflictAbortReplaysRegression(t *testing.T) {
 	f := newConflictRepoB(t)
 
 	var got strings.Builder
 	got.WriteString(f.merge("cf"))
 	got.WriteString(f.status())
+	got.WriteString(cli.SerialConflictDoc(merge.Conflicts(f.open())))
 	got.WriteString(f.mergeAbort())
 	got.WriteString(f.conflicts())
 
 	want := segment(t, testfix.ExpectedLog(t), "TFULL_CONFLICT_ABORT_BEGIN", "TFULL_CONFLICT_ABORT_END_MARKER")
-	want = dropLines(want, "DISPATCH_OK ", "CONFLICTDOC_OK ")
+	want = dropLines(want, "DISPATCH_OK ")
 	if normalize(trim(got.String())) != normalize(want) {
 		t.Fatalf("TFULL_CONFLICT_ABORT mismatch:\ngot:\n%s\nwant:\n%s", trim(got.String()), want)
 	}

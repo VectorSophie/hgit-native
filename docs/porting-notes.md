@@ -4,6 +4,57 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-23: plain-text views, help, version and logo (task 15)
+
+`graph`, `historydoc`, `reconciledoc`, `reconcileoverview` and `conflictdoc`
+live in `pkg/hgit/views` and return plain text; `help`, `version`, `logo` and
+the views' serial lines live in `internal/cli`. Per ARCHITECTURE.md's view
+parity decision, only the information of the DolDoc documents is ported:
+- **Dropped DolDoc rendering**: `$FG,n$` colours, `$CR$` (a plain newline),
+  `$$` escaping, and `$LK$` links. `reconciledoc`'s target link showed 12 hex
+  characters and linked to the full hash; the full 128-character hash is now
+  printed. `conflictdoc`'s repository link is printed as the plain path.
+- **Tree nodes**: a collapsible `$TR,"label"$` with `$ID,+2$` children becomes
+  a `[+] label` line with its children six spaces further in - the layout the
+  base README already uses to show a `graph` document. Nothing is collapsible.
+  A conflict side's text or binary note sits four spaces under its side line
+  (the HolyC starts it on the next line at the same indent).
+- **No destination file**: the HolyC commands take a `<dest.DD>` path and
+  write the document there; the views return the text instead. `ReconcileDoc`
+  takes the commit hash as a second argument, as `reconciledoc` does.
+- **No fixed buffers**: `historydoc` and `reconcileoverview` wrote into an
+  8 KiB document and stopped with a `(truncated ...)` line; `conflictdoc`
+  capped at 60000 bytes. The native documents have no cap, so those lines
+  never appear.
+- **conflictdoc**: the HolyC ends each text side with an extra newline, so a
+  blob ending in `\n` left a blank line after it; the native view does not.
+  An empty blob prints no content line. Mode and kind words are joined by
+  single spaces with no trailing space. The 12-line / 70-column text caps,
+  `.` for non-printables, `... (more)`, and the "resolved to: ours/theirs/
+  deletion" rule are unchanged. A record whose conflict object is missing or
+  malformed is skipped, as the HolyC skips it. `CONFLICTDOC_ERR bad_record`
+  (a conflict meta record that does not decode) is native-only.
+- **graph**: unchanged algorithm. A path's fork point is the first commit of
+  its own first-parent chain, walked back from its HEAD, that is on main's
+  first-parent chain; its node follows that main commit, in path-list order,
+  holding the commits walked before it (oldest first). A path made from
+  another non-main path therefore lists the intermediate path's commits too,
+  and a path that never reaches main (e.g. declared before main's first
+  offer, so its HEAD is all-zero) is left out entirely - Graph.HC's header
+  says such a path becomes its own top-level group, but its code only ever
+  renders a branch whose fork point was found. A repository with no records
+  prints `(no offerings yet)` with no title, one without a main HEAD prints it
+  under the title, as the HolyC does. The walks also stop at a cycle.
+- **historydoc** carries one thing plain `history` does not: each commit's
+  12-hex hash prefix. Otherwise it is `history` reformatted.
+- **help** is HgitHelp verbatim, so it still lists `interactive` (TempleOS
+  console only: screen echo and AutoComplete; no native counterpart, not
+  ported) and the `<dest.DD>` arguments. Every other command it lists has a
+  ported implementation, and every ported command is listed
+  (`TestHelpListsExactlyThePortedCommands`). There is no native dispatcher yet,
+  so dispatch-level tokens such as `DISPATCH_ERR reconciledoc_bad_hex` belong
+  to the task that adds one.
+
 ## 2026-09-23: merge objects written in walk order, and only when kept
 
 The walk no longer appends to the repository. Every object `MergeTreesRecursive`

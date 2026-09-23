@@ -4,6 +4,29 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-23: merge objects written in walk order, and only when kept
+
+The walk no longer appends to the repository. Every object `MergeTreesRecursive`
+would `ObjectPut` - a merged subtree (line 534) or an unresolved conflict's
+evidence (lines 620 and 745) - is queued in ONE list, in the order found, and
+written in that order only by `persist` (conflicts) or `finish` (success,
+subtrees before the root tree, attrs and commit, as `MergeFinishSuccess`
+follows the walk's puts). Two bugs are closed by this:
+- **Archive order**: conflicts used to be appended after the walk, so a
+  conflict found before a clean sibling subtree (`a.txt` before `zsub/`) was
+  written after it. The `.hgs` bytes and `check`'s `CHECK_DANGLING` order now
+  follow walk order, as TempleOS writes them. Pinned by
+  `TestConflictAndCleanSubtreeAreWrittenInWalkOrder`.
+- **Stray in-memory records**: a rename/rename refusal, and `Continue`'s
+  `ErrStillConflicted`, used to leave the walk's subtrees in the caller's
+  `*repo.Repo`, where a later `Save` would have persisted them. The queue is
+  now dropped instead, matching the HolyC freeing its scratch archive.
+  `TestNestedAmbiguousRenameRefusesTheWholeMerge` checks the record count and
+  header count on the same in-memory repository.
+
+`fullName` gains a comment: only a prefix of 255+ bytes makes it cut one byte
+more than the HolyC, whose own 256-byte buffer already overflows there.
+
 ## 2026-09-22: nested trees and rename-aware merge (task 14d)
 
 Completes `Merge.HC`'s `MergeTreesRecursive` in `pkg/hgit/merge`: the tree
@@ -37,11 +60,9 @@ now replayed with its rename and compared in full, object count included.
   right after `MergeTreesRecursive` returns and before the conflict branch's
   `FileWrite`, freeing the scratch archive. So nothing reaches disk: no
   objects, no merge state, HEAD unchanged. The port does the same wasted work
-  in memory (subtrees are `Append`ed to the `*repo.Repo` during the walk) and
-  returns `ErrAmbiguousRename` without `Save`. Deviation: the caller's
-  in-memory `*repo.Repo` keeps those appended records; it must not be saved
-  afterwards (the CLI opens a fresh one per command). `Continue` does not
-  consult the flag, as `HgitMergeContinue` does not.
+  but queues its objects instead of appending them (see the 2026-09-23
+  entry), so a refusal leaves the caller's in-memory `*repo.Repo` untouched
+  too. `Continue` does not consult the flag, as `HgitMergeContinue` does not.
 - **Notice order is the HolyC's print order.** `MERGE_RENAME_RENAME` lines
   are returned in `Result.Autos` (`AutoRenameRefused`) alongside
   `AutoRenamed`/`AutoTookTheirs`/`AutoDeleted`, in walk order, and
@@ -58,6 +79,18 @@ now replayed with its rename and compared in full, object count included.
   it is a tree, so it recurses; every entry inside is a clean deletion, the
   recursion succeeds, and the (empty) merged subtree is written and entered
   like any other. Pinned by `TestDeletedSubdirectoryLeavesAnEmptySubtree`.
+  This is inconsistent with `offer`/`offertree`, which never track an empty
+  directory (`buildTree` skips a subtree with no entries): `merge` can now
+  produce a tree that `offertree` cannot, so the next `offertree` of the same
+  working directory drops that entry again, and history shows a tree change
+  nobody made. Faithful to the HolyC, so the behavior is kept.
+- **Hazard, ported as is and pinned: two entries with one name.** Ours
+  renames `r.txt` to `r2.txt` while theirs keeps `r.txt` and separately adds
+  an unrelated `r2.txt`. Ours normalizes (theirs still has the base name), the
+  `r.txt` decision is written under `r2.txt`, and theirs' own `r2.txt` is
+  taken too, so the merged tree holds two entries named `r2.txt` (Merge.HC
+  lines 267-285 and 430: nothing checks the new name against the other side).
+  `TestRenameOntoTheOtherSidesNewNameGivesTwoEntries` pins it.
 - **Deviation, from undefined behavior**: a subtree's entity id is ours',
   else theirs'. When NEITHER has it (deleted on both sides) the HolyC reads an
   uninitialized `theirs_entity_id`; the port writes 0.

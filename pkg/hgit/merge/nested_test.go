@@ -433,7 +433,15 @@ func TestNestedAmbiguousRenameRefusesTheWholeMerge(t *testing.T) {
 	})
 	before := snapshot(t, f)
 
-	res, err := f.merge("feat")
+	// The same in-memory repository must be untouched too: nothing computed
+	// by the refused walk may be left where a later Save would persist it.
+	r := f.open()
+	records, count := len(r.Arc.Records), r.Arc.Header.Count
+	res, err := merge.Merge(r, "feat")
+	if len(r.Arc.Records) != records || r.Arc.Header.Count != count {
+		t.Fatalf("in-memory archive went %d/%d -> %d/%d records on a refusal",
+			records, count, len(r.Arc.Records), r.Arc.Header.Count)
+	}
 	if !errors.Is(err, merge.ErrAmbiguousRename) {
 		t.Fatalf("err = %v, want ErrAmbiguousRename", err)
 	}
@@ -448,5 +456,68 @@ func TestNestedAmbiguousRenameRefusesTheWholeMerge(t *testing.T) {
 	}
 	if !bytes.Equal(snapshot(t, f), before) {
 		t.Fatal("a refused merge changed the repository on disk")
+	}
+}
+
+// Records land in the archive in walk order, conflicts and merged subtrees
+// interleaved, as ObjectPut writes each the moment it is found: a.txt
+// conflicts before zsub merges cleanly, so the conflict comes first.
+func TestConflictAndCleanSubtreeAreWrittenInWalkOrder(t *testing.T) {
+	f := setup(t)
+	f.put("a.txt", "base")
+	f.put("zsub/x.txt", "x root")
+	f.put("zsub/y.txt", "y root")
+	f.offerTree("root")
+	f.divergeTree(func() { f.put("a.txt", "feat"); f.put("zsub/y.txt", "y feat") },
+		func() { f.put("a.txt", "main"); f.put("zsub/y.txt", "y root"); f.put("zsub/x.txt", "x main") })
+	if tr := treeOf(t, f.open(), f.head("main")); len(tr) != 2 {
+		t.Fatalf("root tree %+v", tr)
+	}
+	before := len(f.open().Arc.Records)
+
+	res, err := f.merge("feat")
+	if err != nil || len(res.Conflicts) != 1 || res.Conflicts[0].Object.Path != "a.txt" {
+		t.Fatalf("%+v %v", res, err)
+	}
+	r := f.open()
+	var got []archive.Type
+	for _, rec := range r.Arc.Records[before:] {
+		got = append(got, rec.Type())
+	}
+	if len(got) != 2 || got[0] != archive.Conflict || got[1] != archive.Tree {
+		t.Fatalf("new records %v, want [conflict tree]", got)
+	}
+	if r.Arc.Records[before].Hash != res.Conflicts[0].Hash {
+		t.Fatal("the conflict record is not the reported conflict")
+	}
+}
+
+// A HolyC hazard ported as is: ours renames r.txt to r2.txt while theirs keeps
+// r.txt and separately adds an unrelated r2.txt. Ours normalizes (theirs still
+// has the base name), the entry is written under r2.txt, and theirs' own
+// r2.txt is taken too - two entries named r2.txt in one merged tree.
+func TestRenameOntoTheOtherSidesNewNameGivesTwoEntries(t *testing.T) {
+	f := setup(t)
+	f.write("r.txt", "rename_me_content_long\n")
+	f.write("k.txt", "k")
+	f.offer("root")
+	f.diverge(func() { f.write("r2.txt", "an unrelated file") },
+		func() { f.rm("r2.txt"); f.rm("r.txt"); f.write("r2.txt", "rename_me_content_long\n") })
+
+	res, err := f.merge("feat")
+	if err != nil || len(res.Conflicts) != 0 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	r := f.open()
+	c, _ := r.Commit(res.Commit)
+	tr, _ := r.Tree(c.Tree)
+	n := 0
+	for _, e := range tr.Entries {
+		if e.Name == "r2.txt" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("%d entries named r2.txt, want the HolyC's 2: %+v", n, tr.Entries)
 	}
 }

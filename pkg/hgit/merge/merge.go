@@ -139,14 +139,15 @@ func Merge(r *repo.Repo, otherPath string) (Result, error) {
 	// Checked after the whole walk and before anything is saved, as the HolyC
 	// checks merge_rename_refused before its conflict FileWrite: the subtrees
 	// and conflict evidence computed on the way are dropped with the scratch
-	// state, never persisted.
+	// archive. Here they are still only w.pending, so dropping it is enough:
+	// neither the disk nor the in-memory repository has them.
 	if w.refused {
 		res.RenameRefused = true
 		return res, ErrAmbiguousRename
 	}
 	res.Conflicts = w.conflicts
 	if len(res.Conflicts) > 0 {
-		return res, persist(r, cur, ours, theirs, otherPath, &res)
+		return res, persist(r, cur, ours, theirs, otherPath, w, &res)
 	}
 	res.Commit, err = finish(r, cur, ours, theirs, otherPath, "", w)
 	if err != nil {
@@ -171,11 +172,24 @@ type walked struct {
 	autos     []Auto
 	conflicts []Conflict
 	refused   bool
+	// pending is every object the walk would ObjectPut - merged subtrees and
+	// unresolved conflict evidence - in the order it found them. It reaches
+	// the repository only through append, once the merge is known to finish
+	// or to persist its conflicts; a refusal simply drops it.
+	pending []archive.Record
+}
+
+// append writes the walk's pending objects to the repository, in walk order.
+func (w walked) append(r *repo.Repo) {
+	for _, rec := range w.pending {
+		r.Append(rec.Type(), rec.Content())
+	}
 }
 
 // walker carries what MergeTreesRecursive shares across every depth: the
-// repository (subtrees are resolved from it and merged ones appended to it,
-// as ObjectPut appends them to the scratch archive), the resolution table,
+// repository (read only - subtrees are resolved from it; what ObjectPut
+// writes to the scratch archive goes to w.pending instead), the resolution
+// table,
 // each side's commit-level attrs and the one merged attrs list (mode is keyed
 // by entity id, the same at every depth), and the notices and conflicts in
 // the order they are found. w.refused is Merge.HC's merge_rename_refused.
@@ -245,9 +259,9 @@ func (wk *walker) level(oursTree, theirsTree, baseTree *object.Tree, prefix stri
 		if anyTree && allTree {
 			// Every side that has this name agrees it is a directory: merge it
 			// one level deeper with this same function. A subtree that
-			// conflicted writes nothing; a clean one is appended right away,
-			// even if a conflict elsewhere later means no merge commit - the
-			// stray subtree Merge.HC's header documents.
+			// conflicted writes nothing; a clean one is queued right away and
+			// written even if a conflict elsewhere later means no merge commit
+			// - the stray subtree Merge.HC's header documents.
 			sub, subOK := wk.level(wk.subtree(oe, oFound), wk.subtree(te, tFound), wk.subtree(be, bFound), full+"/")
 			if !subOK {
 				ok = false
@@ -257,8 +271,9 @@ func (wk *walker) level(oursTree, theirsTree, baseTree *object.Tree, prefix stri
 			if oFound {
 				id = oe.EntityID
 			}
-			h := wk.r.Append(archive.Tree, sub.Encode())
-			take(object.Entry{ChildType: archive.Tree, ChildHash: h, EntityID: id}, outName)
+			rec := archive.NewObject(archive.Tree, sub.Encode())
+			wk.w.pending = append(wk.w.pending, rec)
+			take(object.Entry{ChildType: archive.Tree, ChildHash: rec.Hash, EntityID: id}, outName)
 			continue
 		}
 		if anyTree { // a real kind mismatch: a file on one side, a directory
@@ -281,6 +296,7 @@ func (wk *walker) level(oursTree, theirsTree, baseTree *object.Tree, prefix stri
 				continue
 			}
 			wk.w.conflicts = append(wk.w.conflicts, c)
+			wk.w.pending = append(wk.w.pending, archive.NewObject(archive.Conflict, c.Object.Encode()))
 			ok = false
 			continue
 		}
@@ -370,6 +386,7 @@ func (wk *walker) level(oursTree, theirsTree, baseTree *object.Tree, prefix stri
 				continue
 			}
 			wk.w.conflicts = append(wk.w.conflicts, c)
+			wk.w.pending = append(wk.w.pending, archive.NewObject(archive.Conflict, c.Object.Encode()))
 			ok = false
 		case takeOurs && oFound:
 			take(oe, outName)
@@ -487,7 +504,9 @@ func findEntity(t *object.Tree, id uint64) (string, int) {
 }
 
 // fullName is the HolyC's full_name: prefix plus the local name, the name cut
-// so the whole stays within 254 bytes.
+// so the whole stays within 254 bytes. Only with a prefix of 255+ bytes does
+// this cut one byte more than the HolyC, whose fixed 256-byte buffer already
+// overflows at that depth.
 func fullName(prefix, name string) string {
 	n := 254 - len(prefix)
 	if n < 0 {
@@ -522,8 +541,10 @@ func resolved(resolution archive.Hash, oe object.Entry, oFound bool, te object.E
 // finish is MergeFinishSuccess: the merged tree, its attrs list and the
 // two-parent merge commit, then the oplog entry and HEAD move. msgSuffix is
 // `merge continue`'s resolution provenance, capped exactly as the HolyC's own
-// 254-byte message loop caps it. It does not save; the caller does.
+// 254-byte message loop caps it. The walk's merged subtrees go first, as
+// they were put during the walk there. It does not save; the caller does.
 func finish(r *repo.Repo, cur string, ours, theirs archive.Hash, otherPath, msgSuffix string, w walked) (archive.Hash, error) {
+	w.append(r)
 	msg := []byte("merge " + otherPath)
 	for i := 0; i < len(msgSuffix) && len(msg) < 254; i++ {
 		msg = append(msg, msgSuffix[i])
@@ -543,14 +564,13 @@ func finish(r *repo.Repo, cur string, ours, theirs archive.Hash, otherPath, msgS
 	return h, r.SetHead(cur, h)
 }
 
-// persist writes the conflict evidence: every OBJ_CONFLICT object, the
-// in-progress merge state and one unresolved record per conflict. No merge
-// commit is created and HEAD does not move, but all of this is saved, so the
-// conflict survives a restart (ADR 0016).
-func persist(r *repo.Repo, cur string, ours, theirs archive.Hash, otherPath string, res *Result) error {
-	for i := range res.Conflicts {
-		res.Conflicts[i].Hash = r.Append(archive.Conflict, res.Conflicts[i].Object.Encode())
-	}
+// persist writes the conflict evidence: every OBJ_CONFLICT object, together
+// with any clean subtree the walk merged, in walk order; then the in-progress
+// merge state and one unresolved record per conflict. No merge commit is
+// created and HEAD does not move, but all of this is saved, so the conflict
+// survives a restart (ADR 0016).
+func persist(r *repo.Repo, cur string, ours, theirs archive.Hash, otherPath string, w walked, res *Result) error {
+	w.append(r)
 	if len(cur) > 255 {
 		return repo.ErrNameTooLong
 	}

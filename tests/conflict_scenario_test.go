@@ -161,6 +161,40 @@ func TestScenarioHardenReplaysRegression(t *testing.T) {
 	wantSegment(t, got.String(), "TFULL_HARDEN_BEGIN", "TFULL_HARDEN_END_MARKER")
 }
 
+// TestScenarioAmbiguousRenameIsRefused: both sides rename r.txt, to
+// different names. Each side's normalization sees the other's rename, so
+// MERGE_RENAME_RENAME is printed once per side, then the walk's own notices,
+// then MERGE_REFUSED - and nothing is persisted.
+func TestScenarioAmbiguousRenameIsRefused(t *testing.T) {
+	f := newMergeFx(t, "TFRenameRename.hgs", "*.txt")
+	f.write("r.txt", "rename_me_content_long\n")
+	f.write("k.txt", "k")
+	f.offer("base")
+	f.pathNew("cf")
+	f.pathGo("cf")
+	f.remove("r.txt")
+	f.write("r3.txt", "rename_me_content_long\n")
+	f.offer("cf_rename")
+	f.pathGo("main")
+	f.remove("r3.txt")
+	f.write("r2.txt", "rename_me_content_long\n")
+	f.write("k.txt", "k main")
+	f.offer("main_rename")
+
+	got := f.merge("cf")
+	want := "MERGE_RENAME_RENAME r.txt\n" +
+		"MERGE_RENAME_RENAME r.txt\n" +
+		"MERGE_AUTO took-theirs r3.txt\n" +
+		"MERGE_AUTO deleted r.txt\n" +
+		"MERGE_REFUSED ambiguous_rename_rename - both sides renamed one file differently; nothing changed\n"
+	if got != want {
+		t.Fatalf("got:\n%swant:\n%s", got, want)
+	}
+	if c := f.conflicts(); c != "CONFLICTS_NONE\n" {
+		t.Fatalf("conflicts after a refusal: %q", c)
+	}
+}
+
 // newConflictRepo builds the regression's TFConfRepo.hgs: c.txt edited
 // differently on main and on cf, and r.txt edited on cf but renamed to r2.txt
 // on main.

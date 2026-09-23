@@ -20,12 +20,15 @@ func FuzzParse(f *testing.F) {
 		if err != nil {
 			return
 		}
-		enc := file.Marshal()
+		enc, err := file.Marshal()
+		if err != nil {
+			t.Fatalf("Marshal of a parsed file failed: %v", err)
+		}
 		file2, err := Parse(enc)
 		if err != nil {
 			t.Fatalf("re-parse of our own Marshal failed: %v", err)
 		}
-		if !bytes.Equal(file2.Marshal(), enc) {
+		if enc2, _ := file2.Marshal(); !bytes.Equal(enc2, enc) {
 			t.Fatalf("decode/encode not stable")
 		}
 	})

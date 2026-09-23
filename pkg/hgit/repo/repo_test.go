@@ -100,14 +100,14 @@ func TestBrokenChain(t *testing.T) {
 func TestSetHeadNameTooLong(t *testing.T) {
 	r, _ := Open(copyFixture(t, "TFullRepo.hgs"))
 	before, _ := r.Head("main")
-	err := r.SetHead(strings.Repeat("x", 256), archive.Sum([]byte("z")))
+	err := r.SetHead(strings.Repeat("x", MaxPathName), archive.Sum([]byte("z")))
 	if !errors.Is(err, ErrNameTooLong) {
 		t.Fatalf("got %v", err)
 	}
-	if after, _ := r.Head("main"); after != before || len(r.Meta.All(strings.Repeat("x", 256), meta.TagHead)) != 0 {
+	if after, _ := r.Head("main"); after != before || len(r.Meta.All(strings.Repeat("x", MaxPathName), meta.TagHead)) != 0 {
 		t.Fatal("state changed")
 	}
-	if err := r.SetHead(strings.Repeat("x", 255), archive.Sum([]byte("z"))); err != nil {
+	if err := r.SetHead(strings.Repeat("x", MaxPathName-1), archive.Sum([]byte("z"))); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -203,5 +203,43 @@ func TestSaveFailureLeavesNoTmp(t *testing.T) {
 	tmps, _ := filepath.Glob(p + "*.tmp")
 	if len(tmps) != 0 {
 		t.Fatalf("temp files left: %v", tmps)
+	}
+}
+
+// A metadata record that cannot be encoded makes Save fail and leaves the
+// files on disk as they were, still readable.
+func TestSaveRefusesUnencodableMeta(t *testing.T) {
+	p := copyFixture(t, "TFullRepo.hgs")
+	r, _ := Open(p)
+	before, _ := os.ReadFile(p + ".m")
+	r.Meta.Set("main", meta.TagMergeState, meta.MergeState{OtherPath: strings.Repeat("x", 200)}.Encode())
+	if err := r.Save(); !errors.Is(err, meta.ErrFieldTooLong) {
+		t.Fatalf("got %v", err)
+	}
+	if after, _ := os.ReadFile(p + ".m"); string(after) != string(before) {
+		t.Fatal(".m changed")
+	}
+	if _, err := Open(p); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetHeadSaveOpenRoundTrip(t *testing.T) {
+	p := copyFixture(t, "TFullRepo.hgs")
+	r, _ := Open(p)
+	name := strings.Repeat("n", MaxPathName-1)
+	h := archive.Sum([]byte("z"))
+	if err := r.SetHead(name, h); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	r2, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := r2.Head(name); !ok || got != h {
+		t.Fatal("head lost")
 	}
 }

@@ -20,7 +20,10 @@ const (
 	TagConflict     byte = 7
 )
 
-var ErrMalformed = errors.New("meta: malformed")
+var (
+	ErrMalformed    = errors.New("meta: malformed")
+	ErrFieldTooLong = errors.New("meta: record name or payload longer than 255 bytes")
+)
 
 type Record struct {
 	Name    string
@@ -54,15 +57,21 @@ func Parse(b []byte) (*File, error) {
 	return f, nil
 }
 
-func (f *File) Marshal() []byte {
+// Marshal encodes every record. Name and payload lengths are single bytes on
+// disk, so a record with either over 255 bytes is refused with
+// ErrFieldTooLong rather than written with a wrapped length.
+func (f *File) Marshal() ([]byte, error) {
 	var out []byte
 	for _, r := range f.Records {
+		if len(r.Name) > 255 || len(r.Payload) > 255 {
+			return nil, ErrFieldTooLong
+		}
 		out = append(out, byte(len(r.Name)))
 		out = append(out, r.Name...)
 		out = append(out, r.Tag, byte(len(r.Payload)))
 		out = append(out, r.Payload...)
 	}
-	return out
+	return out, nil
 }
 
 // All returns every record for (name, tag), oldest first.

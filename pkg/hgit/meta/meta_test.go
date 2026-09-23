@@ -29,9 +29,12 @@ func TestRoundTripAndMalformed(t *testing.T) {
 	f := &File{}
 	f.Set("", TagCurrent, []byte("main"))
 	f.Set("feature", TagPathDeclared, nil)
-	b := f.Marshal()
+	b, err := f.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
 	back, err := Parse(b)
-	if err != nil || !bytes.Equal(back.Marshal(), b) {
+	if b2, _ := back.Marshal(); err != nil || !bytes.Equal(b2, b) {
 		t.Fatalf("round trip: %v", err)
 	}
 	for name, c := range map[string][]byte{
@@ -88,5 +91,27 @@ func TestMergeStateAndConflictRecordRoundTrip(t *testing.T) {
 	}
 	if _, err := DecodeConflictRecord(cenc[:128]); !errors.Is(err, ErrMalformed) {
 		t.Fatal("short payload must fail")
+	}
+}
+
+// Name and payload lengths are one byte on disk; Marshal must refuse what it
+// cannot encode rather than wrap the length and corrupt the file.
+func TestMarshalRefusesOverLongFields(t *testing.T) {
+	long := string(bytes.Repeat([]byte("x"), 256))
+	for name, f := range map[string]*File{
+		"name":    {Records: []Record{{Name: long, Tag: TagHead}}},
+		"payload": {Records: []Record{{Name: "main", Tag: TagMergeState, Payload: []byte(long)}}},
+	} {
+		if b, err := f.Marshal(); !errors.Is(err, ErrFieldTooLong) || b != nil {
+			t.Errorf("%s: got %d bytes, err %v", name, len(b), err)
+		}
+	}
+	ok := &File{Records: []Record{{Name: long[:255], Tag: TagHead, Payload: []byte(long[:255])}}}
+	b, err := ok.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back, err := Parse(b); err != nil || back.Records[0].Name != long[:255] || len(back.Records[0].Payload) != 255 {
+		t.Fatalf("255-byte fields must round-trip: %v", err)
 	}
 }

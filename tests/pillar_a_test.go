@@ -122,8 +122,8 @@ func TestFixtureMetaRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if !bytes.Equal(f.Marshal(), raw) {
-			t.Fatalf("%s: re-serialised bytes differ", name)
+		if b, err := f.Marshal(); err != nil || !bytes.Equal(b, raw) {
+			t.Fatalf("%s: re-serialised bytes differ (%v)", name, err)
 		}
 	}
 	if count == 0 {

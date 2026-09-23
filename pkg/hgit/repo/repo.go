@@ -17,7 +17,7 @@ var (
 	ErrNoHead      = errors.New("repo: current path has no head")
 	ErrBrokenChain = errors.New("repo: broken chain")
 	ErrNotFound    = errors.New("repo: object not found")
-	ErrNameTooLong = errors.New("repo: path name longer than 255 bytes")
+	ErrNameTooLong = errors.New("repo: path name longer than 63 bytes")
 )
 
 // NotTypeError reports an object found under a hash but of the wrong type.
@@ -76,12 +76,17 @@ func writeAtomic(path string, b []byte) error {
 }
 
 // Save writes .hgs first, then .m. Header.Count is synced to the record count.
+// Metadata that cannot be encoded fails before either file is touched.
 func (r *Repo) Save() error {
 	r.Arc.Header.Count = uint64(len(r.Arc.Records))
+	m, err := r.Meta.Marshal()
+	if err != nil {
+		return err
+	}
 	if err := writeAtomic(r.Path, r.Arc.Marshal()); err != nil {
 		return err
 	}
-	return writeAtomic(r.Path+".m", r.Meta.Marshal())
+	return writeAtomic(r.Path+".m", m)
 }
 
 // Get returns a copy of the record for h.
@@ -141,10 +146,11 @@ func (r *Repo) Head(path string) (archive.Hash, bool) {
 	return h, true
 }
 
-// SetHead records h as path's head. Names over 255 bytes cannot be encoded
-// and return ErrNameTooLong, leaving the metadata unchanged.
+// SetHead records h as path's head. A name of MaxPathName bytes or more
+// (the same limit PathNew enforces) returns ErrNameTooLong, leaving the
+// metadata unchanged.
 func (r *Repo) SetHead(path string, h archive.Hash) error {
-	if len(path) > 255 {
+	if len(path) >= MaxPathName {
 		return ErrNameTooLong
 	}
 	r.Meta.Set(path, meta.TagHead, h[:])

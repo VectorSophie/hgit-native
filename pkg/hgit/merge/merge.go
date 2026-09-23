@@ -571,7 +571,7 @@ func finish(r *repo.Repo, cur string, ours, theirs archive.Hash, otherPath, msgS
 // survives a restart (ADR 0016).
 func persist(r *repo.Repo, cur string, ours, theirs archive.Hash, otherPath string, w walked, res *Result) error {
 	w.append(r)
-	if len(cur) > 255 {
+	if len(cur) >= repo.MaxPathName {
 		return repo.ErrNameTooLong
 	}
 	r.Meta.Set(cur, meta.TagMergeState, meta.MergeState{Ours: ours, Theirs: theirs, OtherPath: otherPath}.Encode())

@@ -8,7 +8,8 @@ import (
 )
 
 // MaxPathName is Paths.HC's HGIT_MAX_PATH_NAME: a path name must be shorter
-// than this, so 63 bytes is the longest one PathNew accepts.
+// than this, so 63 bytes is the longest one PathNew, SetHead and PathGo
+// accept.
 const MaxPathName = 64
 
 var (
@@ -66,7 +67,7 @@ func (r *Repo) PathGo(name string) error {
 	if !r.PathExists(name) {
 		return ErrNoSuchPath
 	}
-	if len(name) > 255 {
+	if len(name) >= MaxPathName {
 		return ErrNameTooLong
 	}
 	r.Meta.Set("", meta.TagCurrent, []byte(name))

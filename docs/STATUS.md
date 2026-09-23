@@ -26,8 +26,8 @@ and no Homebrew/Chocolatey/apt listing exist for this repository.
 - Fuzz tests over every byte-level parser (`archive.Parse`,
   `object.DecodeTree/DecodeCommit/DecodeAttrs/DecodeConflict`,
   `meta.Parse`), seeded from real fixture bytes. `go test -fuzz=... -
-  fuzztime=30s ./pkg/hgit/...` for each of the five targets found no
-  crasher (14M+ total executions). See `docs/porting-notes.md`.
+  fuzztime=30s ./pkg/hgit/...` for each of the six targets found no
+  crasher (over 10.3M total executions). See `docs/porting-notes.md`.
 - CI (`.github/workflows/ci.yml`): `ubuntu-latest`, `macos-latest`,
   `windows-latest`, each checking out the submodule and running `go vet`,
   `go build`, `go test`.

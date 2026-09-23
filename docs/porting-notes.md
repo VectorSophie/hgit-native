@@ -15,8 +15,8 @@ seed from the actual tree/commit/attrs/conflict record content found by
 parsing every `.hgs` fixture with `archive.Parse` first. The invariant each
 target checks: parsing never panics, and whatever it accepts round-trips
 stably (decode, re-encode, re-decode, and the second decode's own re-encode
-must equal the first encode). Each of the five targets ran for 30s locally
-(`go test -fuzz=FuzzX -fuzztime=30s ./pkg/hgit/...`); combined, over 14
+must equal the first encode). Each of the six targets ran for 30s locally
+(`go test -fuzz=FuzzX -fuzztime=30s ./pkg/hgit/...`); combined, over 10.3
 million executions with no crasher and no round-trip failure. No `testdata/
 fuzz/` corpus was generated for any target, since Go only writes a fuzz
 target's on-disk seed corpus when a run finds a failing input to reproduce -

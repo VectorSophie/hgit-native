@@ -1,10 +1,10 @@
 # hgit-native status
 
-Snapshot as of 2026-09-23. **The port is fully implemented and tested,
-except for one manual step.** Every layer in
-[`ARCHITECTURE.md`](ARCHITECTURE.md#order) is built, `cmd/hgit` is a real
-command-line tool, and the full 302-line command-line regression recorded
-against real TempleOS output passes end to end.
+Snapshot as of 2026-09-24. **The port is fully implemented and tested.**
+Every layer in [`ARCHITECTURE.md`](ARCHITECTURE.md#order) is built,
+`cmd/hgit` is a real command-line tool, the full 302-line command-line
+regression recorded against real TempleOS output passes end to end, and
+TempleOS itself has now read a repository this port wrote.
 
 Against ARCHITECTURE.md's "Done means" definition:
 
@@ -13,8 +13,11 @@ Against ARCHITECTURE.md's "Done means" definition:
   Windows are not yet confirmed.
 - Every command in `help` is covered by A, B or a unit test; the commands
   covered by unit tests only are listed under "Known coverage gap" below.
-- **Pillar C** (a manual run in which TempleOS reads a repository written by
-  hgit-native) has not been done and remains outstanding.
+- **Pillar C** now passes (see below): a repository built entirely by
+  `cmd/hgit` (`init` + two `offer`s) was pushed into a real TempleOS guest
+  under QEMU, and `Hgit("check ...")`/`Hgit("history ...")` there produced
+  the same `CHECK_OK`/history output this port's own `--serial` mode does
+  for the identical repository.
 
 No GitHub release and no Homebrew/Chocolatey/apt listing exist for this
 repository.
@@ -59,7 +62,7 @@ Layers and gates are defined in [`ARCHITECTURE.md`](ARCHITECTURE.md#order).
 | Conformance tests (pillar B: full command-line replay) | done, passing |
 | Fuzz testing of the byte-level parsers | done, no crashers found |
 | CI | workflow written; no recorded run yet |
-| Pillar C (TempleOS reads a native-written repository, manual) | not done |
+| Pillar C (TempleOS reads a native-written repository, manual) | done, passing |
 | Packaging (Homebrew, Chocolatey, deb) | not started |
 | TUI / GUI | not started |
 
@@ -75,12 +78,45 @@ end-to-end replay against real TempleOS output: `revert`, `reconcile`, `reverttr
 
 Closing this gap means recording a new TempleOS session that runs them.
 
+## Pillar C: TempleOS reads a native-written repository
+
+Done, 2026-09-24. `tools/interop.py` boots a copy of the TempleOS bundle
+under QEMU, pushes a repository `cmd/hgit` built (`init`, then two `offer`s,
+producing `Interop.hgs`/`Interop.hgs.m`) into the guest over COM2, and runs
+`Hgit("check C:/Home/Interop.hgs")`/`Hgit("history C:/Home/Interop.hgs")`
+there. Real output from that run:
+
+```
+CHECK_OK objects=7 format_version=4
+CHECK_REFS_OK
+CHECK_DANGLING_NONE
+commit ts=1790168860391 msg=native offer two
+commit ts=1790168860389 msg=native offer one
+HISTORY_END shown=2
+```
+
+The same repository's `--serial check`/`--serial history` through `cmd/hgit`
+itself report the identical `CHECK_OK objects=7 format_version=4` /
+`CHECK_REFS_OK` / `CHECK_DANGLING_NONE` and the same two commit lines: this
+port's repository is real, valid, and readable to TempleOS, not just to
+itself.
+
+**Push protocol finding.** The transport carries raw bytes over a serial
+line terminated by a single `0x04` (EOT) byte, the same mechanism
+`build-bundle.py`/`gen-fixtures.py` use. That works for those tools because
+they push `HgitAll.HC`, which is HolyC source text with no embedded `0x04`.
+A `.hgs` file is binary and legitimately contains `0x04` as ordinary data
+(for example, the format-version byte at header offset 4, whenever the
+version is 4) - sent raw, the receiver mistook that data byte for the
+terminator and truncated every push at exactly 4 bytes, deterministically.
+`tools/interop.py` hex-encodes the payload before sending and decodes it on
+the guest side with `HexDigit` (already loaded via `HgitAll.HC`), so the
+wire stream is pure ASCII and `0x04` can only ever mean "done". This is a
+real, reusable finding for anything that pushes a `.hgs`/`.hgs.m` file (not
+just HolyC source) into a TempleOS guest.
+
 ## Not done
 
-- **Pillar C** (reverse interop: TempleOS reads a repository written by
-  hgit-native): the manual part of ARCHITECTURE.md's "Done means".
-  It is a manual run in a TempleOS guest under QEMU, and no script for it
-  exists yet.
 - **Packaging and release**: no `.deb`, no Homebrew formula, no Chocolatey
   package is built or published for hgit-native. Anyone wanting the tool
   today builds it with `go build ./cmd/hgit` ([`INSTALL.md`](../INSTALL.md)).

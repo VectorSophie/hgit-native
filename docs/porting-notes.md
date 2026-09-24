@@ -4,6 +4,28 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-24: pillar C, and a push-protocol byte collision
+
+- **Pillar C passes.** `tools/interop.py` pushes a `cmd/hgit`-built
+  repository into a real TempleOS guest and runs `check`/`history` there;
+  the guest's output matches this port's own `--serial` output for the same
+  repository exactly. See `docs/STATUS.md`'s "Pillar C" section for the real
+  transcript.
+- **The COM2 push protocol's `0x04` (EOT) terminator collides with real
+  `.hgs` bytes.** `build-bundle.py`/`gen-fixtures.py` push raw bytes
+  terminated by a single `0x04`; that is safe for them because they push
+  `HgitAll.HC`, HolyC source text, which has no reason to contain `0x04`. A
+  `.hgs` archive is binary and its own header's format-version byte, at
+  offset 4, is literally `0x04` whenever the version is 4 (the version this
+  whole project writes) - pushed raw, the receiver read that data byte as
+  the terminator and truncated every transfer at exactly 4 bytes, every
+  time, deterministically (not a flaky drop). `tools/interop.py` hex-encodes
+  the payload before sending and decodes it on the guest side with
+  `HexDigit` (already loaded via `HgitAll.HC`), so the wire stream is pure
+  ASCII and `0x04` can only mean "done". Anything that pushes an actual
+  `.hgs`/`.hgs.m` file into a TempleOS guest over this transport needs the
+  same encoding; pushing HolyC source text does not.
+
 ## 2026-09-23: length limits and unsupported rule lines
 
 - **`meta.File.Marshal` refuses what it cannot encode.** A metadata record's

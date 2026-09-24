@@ -41,11 +41,17 @@ Go is written.
   conflict path over 254 bytes reaches this, and the cut is the HolyC's own
   except in the one corner the "merge objects written in walk order" entry
   below names.
-- **A seventh fuzz target**, `fossil.FuzzDeltaApply`: `DeltaApply` never
-  panics on arbitrary source and delta bytes, and is deterministic on what it
-  accepts. A 30-second run (about 3.2 million executions) found no crasher.
+- **Two more fuzz targets in `fossil`**, bringing the total to eight:
+  `FuzzDeltaApply` (`DeltaApply` never panics on arbitrary source and delta
+  bytes, stays under the documented output cap, and is deterministic on what
+  it accepts) and `FuzzDeltaRoundTrip` (`DeltaApply(source,
+  DeltaMakeReal(source, target))` always equals `target`, for arbitrary
+  source/target pairs). A 30-second run of each found no crasher.
 
 ## 2026-09-23: fuzzing, CI, and the docs pass
+
+(Superseded on the target count — see the "length limits and unsupported
+rule lines" entry above, which adds a seventh target, `fossil.FuzzDeltaApply`.)
 
 Native `go test -fuzz` (stdlib, no new dependency) over every byte-level
 parser: `archive.Parse`, `object.DecodeTree`/`DecodeCommit`/`DecodeAttrs`/

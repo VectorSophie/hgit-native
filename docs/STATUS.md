@@ -39,7 +39,7 @@ repository.
   `object.DecodeTree/DecodeCommit/DecodeAttrs/DecodeConflict`,
   `meta.Parse`, `fossil.DeltaApply`), seeded from fixture bytes (constructed
   deltas for `fossil`). A 30-second
-  `go test -fuzz` run of each of the seven targets found no crasher. See
+  `go test -fuzz` run of each of the eight targets found no crasher. See
   `docs/porting-notes.md`.
 - CI (`.github/workflows/ci.yml`): `ubuntu-latest`, `macos-latest`,
   `windows-latest`, each checking out the submodule and running `go vet`,

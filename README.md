@@ -73,7 +73,7 @@ Full parity with hgit 1.8.9:
 | `export` / `import` | Whole-repo portability, paths and history intact |
 
 The DolDoc views (`historydoc`, `reconciledoc`, `conflictdoc`) are TempleOS's own
-rich-text format; here they become plain-text/ANSI output carrying the same
+rich-text format; here they become plain-text output carrying the same
 information. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Ignore rules and file attributes

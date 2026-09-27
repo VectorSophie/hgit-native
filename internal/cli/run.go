@@ -116,6 +116,10 @@ func init() {
 		{"path close", "<repo_path> <name>", 2, 2, false, runPathClose},
 		{"export", "<src_repo_path> <dest_repo_path>", 2, 2, false, copyCmd("export")},
 		{"import", "<src_repo_path> <dest_repo_path>", 2, 2, false, copyCmd("import")},
+		{"bundle create", "<repo_path> <out.hgb> [--have <have.hgh>] [--base <hash>]... [--paths <name>]... [--label <name>]", 2, 2, false, runBundleCreate},
+		{"bundle inspect", "<bundle.hgb>", 1, 1, false, runBundleInspect},
+		{"bundle apply", "<repo_path> <bundle.hgb> [--label <name>]", 2, 2, false, runBundleApply},
+		{"have", "<repo_path> <out.hgh>", 2, 2, false, runHave},
 		{"help", "", 0, 0, false, runHelp},
 		{"version", "", 0, 0, false, runVersion},
 		{"logo", "", 0, 0, false, runLogo},
@@ -178,7 +182,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	// The two-word commands. Like Hgit.HC, `merge` treats a first argument of
 	// "continue" or "abort" as its sub-form and anything else as a repository.
 	switch name {
-	case "operation", "path":
+	case "operation", "path", "bundle":
 		sub := ""
 		if len(a) > 0 {
 			sub, a = a[0], a[1:]
@@ -197,6 +201,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return c.usageErr("DISPATCH_ERR unknown_command "+trunc31(name)+"\nDISPATCH_HINT try 'help' for a full command list\n",
 			fmt.Sprintf("unknown command %q - try 'hgit help'", name), "")
+	}
+
+	// bundle create/apply parse their own flags (--have/--base/--paths/
+	// --label), which the generic flag.FlagSet below - built with no flags
+	// registered - would otherwise reject outright.
+	if name == "bundle create" || name == "bundle apply" {
+		return cm.run(c, a)
 	}
 
 	sfs := flag.NewFlagSet("hgit "+name, flag.ContinueOnError)

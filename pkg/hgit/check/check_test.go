@@ -153,6 +153,64 @@ func TestSharedSubtreeAndCycle(t *testing.T) {
 	Run(r) // terminating is the assertion
 }
 
+// ADR 0019 section 3: a torn tail is reported separately from a corrupt (but
+// complete) record earlier in the file, and neither stops the other from
+// being detected.
+func TestTornTailAndAnEarlierCorruptRecordAreBothReported(t *testing.T) {
+	r := newRepo(t)
+	corruptHash := r.Put(archive.Blob, []byte("will be corrupted"))
+	unique := r.Put(archive.Blob, []byte("unique"))
+	trh := r.Put(archive.Tree, (&object.Tree{Entries: []object.Entry{
+		{Name: "a", ChildType: archive.Blob, ChildHash: corruptHash, EntityID: 1},
+		{Name: "b", ChildType: archive.Blob, ChildHash: unique, EntityID: 2},
+	}}).Encode())
+	c := commit(r, trh)
+	r.SetHead("main", c)
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(r.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := archive.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Corrupt the first record's content (fits structurally, bad hash).
+	mutated := append([]byte(nil), raw...)
+	mutated[archive.HeaderLen+8] ^= 0xff
+	// Tear off half of the last record (the commit) so the walk stops
+	// before it, well after the corrupted-but-complete first record.
+	lastRecSize := 8 + len(full.Records[len(full.Records)-1].Data) + archive.HashLen
+	mutated = mutated[:len(mutated)-lastRecSize/2]
+	if err := os.WriteFile(r.Path, mutated, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r2, err := repo.Open(r.Path)
+	if err != nil {
+		t.Fatalf("Open on a torn+corrupt archive must succeed: %v", err)
+	}
+	if !r2.Torn() {
+		t.Fatal("want a torn repo")
+	}
+	rep := Run(r2)
+	if rep.TornBytes == 0 || rep.TornOffset != r2.TornOffset || rep.TornBytes != r2.TornBytes {
+		t.Fatalf("Report torn fields = offset=%d bytes=%d, want the repo's own %d/%d",
+			rep.TornOffset, rep.TornBytes, r2.TornOffset, r2.TornBytes)
+	}
+	if len(rep.HashBad) != 1 || rep.HashBad[0] != corruptHash {
+		t.Fatalf("HashBad = %+v, want just the corrupted record", rep.HashBad)
+	}
+	// The corrupt record is well before the tear and must still have been
+	// walked (it is not what stopped the scan).
+	if rep.Objects < 3 {
+		t.Fatalf("Objects = %d, want the corrupt record and its neighbours still counted", rep.Objects)
+	}
+}
+
 func TestNewerFormat(t *testing.T) {
 	_, err := repo.Open(testfix.Path("TFConfNewer.hgs"))
 	if _, ok := err.(*archive.UnsupportedVersionError); !ok {

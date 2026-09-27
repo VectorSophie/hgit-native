@@ -96,6 +96,90 @@ func TestParseRejectsTruncatedAndHugeLengths(t *testing.T) {
 	}
 }
 
+// ADR 0019 section 3: ParseTolerant never errors on a torn tail - it keeps
+// whatever came before it and reports where the tear starts.
+func TestParseTolerantStopsAtATornRecordInsteadOfErroring(t *testing.T) {
+	h := Header{Version: 4, Count: 1}.Marshal()
+
+	cases := []struct {
+		name string
+		tail []byte
+	}{
+		{"huge length", func() []byte { b, _ := hex.DecodeString("ffffffffffffff7f"); return b }()},
+		{"short length field", []byte{1, 2, 3}},
+		{"data present, hash missing", []byte{5, 0, 0, 0, 0, 0, 0, 0, 'a', 'b', 'c', 'd', 'e'}},
+	}
+	for _, c := range cases {
+		b := append(append([]byte{}, h...), c.tail...)
+		a, tornOffset, tornBytes, err := ParseTolerant(b)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if len(a.Records) != 0 {
+			t.Fatalf("%s: %d records, want 0 (the only record present is torn)", c.name, len(a.Records))
+		}
+		if tornOffset != HeaderLen {
+			t.Fatalf("%s: tornOffset=%d, want %d (the header length)", c.name, tornOffset, HeaderLen)
+		}
+		if tornBytes != len(c.tail) {
+			t.Fatalf("%s: tornBytes=%d, want %d", c.name, tornBytes, len(c.tail))
+		}
+		// Parse itself keeps its strict, all-or-nothing contract.
+		if _, err := Parse(b); !errors.Is(err, ErrTruncated) {
+			t.Fatalf("%s: Parse must still error, got %v", c.name, err)
+		}
+	}
+}
+
+// A clean archive (nothing torn) reports zero for both torn fields, and
+// ParseTolerant/Parse agree on every record.
+func TestParseTolerantAgreesWithParseOnACleanArchive(t *testing.T) {
+	full := &Archive{Header: Header{Version: 4}, Records: []Record{NewRecord([]byte("one")), NewRecord([]byte("two"))}}
+	full.Header.Count = uint64(len(full.Records))
+	b := full.Marshal()
+
+	a, tornOffset, tornBytes, err := ParseTolerant(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tornOffset != 0 || tornBytes != 0 {
+		t.Fatalf("clean archive reported torn: offset=%d bytes=%d", tornOffset, tornBytes)
+	}
+	if len(a.Records) != 2 {
+		t.Fatalf("%d records, want 2", len(a.Records))
+	}
+	strict, err := Parse(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strict.Records) != len(a.Records) {
+		t.Fatal("Parse and ParseTolerant disagree on a clean archive")
+	}
+}
+
+// A record that fits but has a bad stored hash is not torn: ParseTolerant
+// keeps it and keeps walking past it (Verify is what flags it, unchanged).
+func TestParseTolerantDoesNotStopAtACorruptRecord(t *testing.T) {
+	full := &Archive{Header: Header{Version: 4}, Records: []Record{NewRecord([]byte("one")), NewRecord([]byte("two"))}}
+	full.Header.Count = uint64(len(full.Records))
+	b := full.Marshal()
+	b[HeaderLen+8] ^= 0xff // corrupt the first record's content, in place
+
+	a, tornOffset, tornBytes, err := ParseTolerant(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tornOffset != 0 || tornBytes != 0 {
+		t.Fatal("a corrupt-but-complete record must not be reported as torn")
+	}
+	if len(a.Records) != 2 {
+		t.Fatalf("%d records, want both (corruption does not stop the walk)", len(a.Records))
+	}
+	if total, ok := a.Verify(); total != 2 || ok != 1 {
+		t.Fatalf("verify %d/%d, want 1/2", ok, total)
+	}
+}
+
 func TestVerifyDetectsCorruption(t *testing.T) {
 	a := &Archive{Header: Header{Version: 4, Count: 1}, Records: []Record{NewRecord([]byte("hello"))}}
 	a.Records[0].Data[0] ^= 0xff

@@ -30,6 +30,23 @@ type Repo struct {
 	Arc  *archive.Archive
 	Meta *meta.File
 	idx  map[archive.Hash]int
+
+	// Dedup makes Store skip an object whose hash is already present (ADR
+	// 0019). Off, Store is Append: the 1.8.9 ObjectPut, kept so that
+	// byte-exact reproduction of the 1.8.9 TempleOS output stays testable.
+	Dedup bool
+}
+
+// DefaultDedup is the Dedup every repository Open returns starts with.
+var DefaultDedup = true
+
+// SetDefaultDedup sets DefaultDedup and returns a func that restores the
+// previous value - for tests that pin legacy (1.8.9) append mode:
+// t.Cleanup(repo.SetDefaultDedup(false)).
+func SetDefaultDedup(v bool) (restore func()) {
+	old := DefaultDedup
+	DefaultDedup = v
+	return func() { DefaultDedup = old }
 }
 
 // Open reads path and path+".m"; a missing .m is an empty File.
@@ -50,7 +67,7 @@ func Open(path string) (*Repo, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	r := &Repo{Path: path, Arc: a, Meta: m, idx: make(map[archive.Hash]int, len(a.Records))}
+	r := &Repo{Path: path, Arc: a, Meta: m, idx: make(map[archive.Hash]int, len(a.Records)), Dedup: DefaultDedup}
 	for i, rec := range a.Records {
 		if _, dup := r.idx[rec.Hash]; !dup { // first occurrence wins, as the linear scan did
 			r.idx[rec.Hash] = i
@@ -100,12 +117,12 @@ func (r *Repo) Get(h archive.Hash) (archive.Record, bool) {
 	return rec, true
 }
 
-// Append stores the object unconditionally, as ObjectPut does: offering the
-// same content twice leaves two records, which is what `check` counts and
-// what the golden repositories contain. The hash index keeps pointing at the
-// first occurrence, so Get stays stable - duplicate records are
-// byte-identical by construction. Commands that record a working directory
-// use this.
+// Append stores the object unconditionally, as the 1.8.9 ObjectPut does:
+// offering the same content twice leaves two records, which is what `check`
+// counts and what the 1.8.9 golden repositories contain. The hash index
+// keeps pointing at the first occurrence, so Get stays stable - duplicate
+// records are byte-identical by construction. Commands write through Store,
+// which falls back to this in legacy mode.
 func (r *Repo) Append(t archive.Type, content []byte) archive.Hash {
 	rec := archive.NewObject(t, content)
 	if _, ok := r.idx[rec.Hash]; !ok {
@@ -116,10 +133,20 @@ func (r *Repo) Append(t archive.Type, content []byte) archive.Hash {
 	return rec.Hash
 }
 
-// Put is the deduplicating variant: it stores the object only when the
-// archive does not already hold that hash. The HolyC has no equivalent, so
-// nothing that mirrors an ObjectPut call may use it - the object count would
-// stop matching what TempleOS wrote.
+// Store is ObjectPut, the one way commands write objects. With Dedup on
+// (ADR 0019 section 1) an object whose hash the archive already holds -
+// loaded from disk or stored earlier by this same command - is not appended
+// again; every other object is appended exactly as Append does, so skipping
+// removes records and never reorders the rest. With Dedup off it is Append.
+func (r *Repo) Store(t archive.Type, content []byte) archive.Hash {
+	if !r.Dedup {
+		return r.Append(t, content)
+	}
+	return r.Put(t, content)
+}
+
+// Put always deduplicates, whatever Dedup says: tests use it to build
+// repositories without caring about the mode.
 func (r *Repo) Put(t archive.Type, content []byte) archive.Hash {
 	rec := archive.NewObject(t, content)
 	if _, ok := r.idx[rec.Hash]; ok {

@@ -21,6 +21,7 @@ import (
 // this is status seeing genuinely uncommitted changes, not a replay of
 // already-committed history.
 func TestScenarioStatusReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	oldClock := clock.Now
 	t.Cleanup(func() { clock.Now = oldClock })
 	clock.Now = func() uint64 { return 345402 }
@@ -80,6 +81,7 @@ func TestScenarioStatusReplaysRegression(t *testing.T) {
 // commit, edit SubA/inner.txt, then `statustree` before the second offertree
 // commits anything.
 func TestScenarioStatusTreeReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	oldClock, oldID := clock.Now, offer.NewEntityID
 	t.Cleanup(func() { clock.Now, offer.NewEntityID = oldClock, oldID })
 	clock.Now = func() uint64 { return treeTS1 }
@@ -146,6 +148,7 @@ func TestScenarioStatusTreeReplaysRegression(t *testing.T) {
 // mode-only change via .hgitattributes, with no content edit at all -
 // STATUS_UNCHANGED and STATUS_MODE_CHANGED both fire for the same file.
 func TestScenarioAttrsStatusReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	oldClock := clock.Now
 	t.Cleanup(func() { clock.Now = oldClock })
 	clock.Now = func() uint64 { return 600000 }

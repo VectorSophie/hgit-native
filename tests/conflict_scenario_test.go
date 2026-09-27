@@ -57,6 +57,7 @@ func (f *mergeFx) status() string {
 // expectation here, and nothing else is: `conflictdoc`'s CONFLICTDOC_OK line
 // is compared too.
 func TestScenarioConflictAbortReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	f := newConflictRepoB(t)
 
 	var got strings.Builder
@@ -81,6 +82,7 @@ func TestScenarioConflictAbortReplaysRegression(t *testing.T) {
 // `check`, and a `merge abort` with nothing left to abort. The whole segment
 // is compared, object count included.
 func TestScenarioConflictMergeReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	f := newConflictRepo(t)
 
 	var got strings.Builder
@@ -131,6 +133,7 @@ func evidenceHashes(s string) []string {
 // conflict record pointing at an object that does not exist, `check` on it,
 // `merge abort`, and `check` on an archive from a newer format version.
 func TestScenarioHardenReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	f := newConflictRepoB(t)
 	f.merge("cf")
 	f.mergeAbort()
@@ -167,6 +170,7 @@ func TestScenarioHardenReplaysRegression(t *testing.T) {
 // MERGE_RENAME_RENAME is printed once per side, then the walk's own notices,
 // then MERGE_REFUSED - and nothing is persisted.
 func TestScenarioAmbiguousRenameIsRefused(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	f := newMergeFx(t, "TFRenameRename.hgs", "*.txt")
 	f.write("r.txt", "rename_me_content_long\n")
 	f.write("k.txt", "k")

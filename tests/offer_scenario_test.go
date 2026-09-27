@@ -66,6 +66,7 @@ func byName(tr *object.Tree) map[string]object.Entry {
 // TestScenarioOfferReplaysRegression replays the regression's first two offers
 // natively and compares the result against contract/fixtures/TFullRepo.hgs.
 func TestScenarioOfferReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	oldClock, oldID := clock.Now, offer.NewEntityID
 	t.Cleanup(func() { clock.Now, offer.NewEntityID = oldClock, oldID })
 	clock.Now = func() uint64 { return 345402 }

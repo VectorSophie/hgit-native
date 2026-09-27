@@ -19,6 +19,7 @@ import (
 // then `help` between the TFULL_HELP markers - byte for byte, trailing spaces
 // of the logo included.
 func TestScenarioDiscoverabilityReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	log := testfix.ExpectedLog(t)
 	const after = "TFULL_HARDEN_END_MARKER\n"
 	i, j := strings.Index(log, after), strings.Index(log, "TFULL_HELP_BEGIN\n")

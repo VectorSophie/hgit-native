@@ -19,6 +19,7 @@ import (
 // second offer, then `diff` against the second commit - i.e. the second
 // commit's tree against the first commit's own tree.
 func TestScenarioDiffReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	oldClock := clock.Now
 	t.Cleanup(func() { clock.Now = oldClock })
 	clock.Now = func() uint64 { return 345402 }
@@ -83,6 +84,7 @@ func TestScenarioDiffReplaysRegression(t *testing.T) {
 // second commit via .hgitattributes, diffed against its parent - no content
 // changed, so DIFF_MODE_CHANGED is the only line.
 func TestScenarioAttrsDiffReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	oldClock := clock.Now
 	t.Cleanup(func() { clock.Now = oldClock })
 	clock.Now = func() uint64 { return 600000 }

@@ -35,6 +35,7 @@ const (
 // TestScenarioOfferTreeReplaysRegression replays the regression's offertree
 // and correcttree steps natively against TFullTreeRepo.hgs.
 func TestScenarioOfferTreeReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	oldClock, oldID := clock.Now, offer.NewEntityID
 	t.Cleanup(func() { clock.Now, offer.NewEntityID = oldClock, oldID })
 
@@ -181,6 +182,7 @@ func TestScenarioOfferTreeReplaysRegression(t *testing.T) {
 // step, which is an offertree too: the .hgitignore is itself offered, x.tmp
 // is not, and the object count matches the log.
 func TestScenarioOfferTreeReplaysIgnoreStep(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	oldClock, oldID := clock.Now, offer.NewEntityID
 	t.Cleanup(func() { clock.Now, offer.NewEntityID = oldClock, oldID })
 	clock.Now = func() uint64 { return 530000 }

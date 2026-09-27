@@ -115,6 +115,7 @@ func trim(s string) string {
 // TestScenarioMergeReplaysRegression replays the regression's own merge
 // repository: a real non-conflicting three-way merge, then a fast-forward.
 func TestScenarioMergeReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	f := newMergeFx(t, "TFullMergeRepo.hgs", "TFMergeFile*.txt")
 	// The regression's own FileWrite lengths are one past each literal, so
 	// every one of these files ends in the terminating NUL - which makes them
@@ -147,6 +148,7 @@ func TestScenarioMergeReplaysRegression(t *testing.T) {
 // clean mode-only change on one side and a content edit on the other merge
 // without a conflict, and the merged mode lands in the merge commit's attrs.
 func TestScenarioMergeModeReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	f := newMergeFx(t, "TFMergeModeRepo.hgs", "TFMM_*.txt")
 	f.write("TFMM_a.txt", "shared")
 	f.write("TFMM_b.txt", "other root")

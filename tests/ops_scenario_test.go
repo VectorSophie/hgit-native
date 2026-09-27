@@ -19,6 +19,7 @@ import (
 // segment, the `correct` offering and finally `export`/`import`, comparing
 // every segment the regression prints along the way.
 func TestScenarioOpsReplaysRegression(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	oldClock := clock.Now
 	t.Cleanup(func() { clock.Now = oldClock })
 	stamps := []uint64{345402, 394453, 451100, 512602}

@@ -30,6 +30,7 @@ import (
 // replay prints them itself; so are its FileWrite/Del/DirMk steps and the
 // three raw metadata writes of TFULL_HARDEN, which are not commands.
 func TestFullRegressionReplay(t *testing.T) {
+	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	base := t.TempDir()
 	wd, err := os.Getwd()
 	if err != nil {

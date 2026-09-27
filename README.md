@@ -22,6 +22,7 @@
   <a href="INSTALL.md">Install</a> ·
   <a href="#the-commands">Commands</a> ·
   <a href="#how-hgit-differs-from-git">vs. Git</a> ·
+  <a href="#experimental-storage-and-exchange-for-high-commit-volume-workflows">Storage/exchange (experimental)</a> ·
   <a href="docs/ARCHITECTURE.md">Architecture</a> ·
   <a href="docs/STATUS.md">Status</a> ·
   <a href="docs/adr/">ADRs</a>
@@ -101,6 +102,27 @@ backed by a decision record in the original project:
 
 None of this makes hgit a replacement for Git. It is a different answer to the
 same problem.
+
+## Experimental: storage and exchange for high-commit-volume workflows
+
+Since 1.9.0 this port (and the original TempleOS project) carry a scoped,
+**experimental** set of storage and exchange changes: a writer stores each
+distinct object once instead of duplicating it on every commit, an
+interrupted write is recoverable, and a portable incremental exchange file
+(`.hgb`/`.hgh`, spec in `contract/BUNDLE.md`) sends what a replica is missing
+rather than the whole repository. None of these techniques is Git-specific —
+a store-once writer, a tolerant reader, and a manifest-plus-prerequisites
+exchange file could be adopted by any content-addressed VCS.
+
+The motivation isn't "faster than Git" (Git already solves this at far larger
+scale, with packfiles, partial clone and its own bundle format). It's that
+everyday usage is shifting toward far more commits per working copy — agentic
+tooling producing 50+ commits a day, bigger monorepos, more replicas of one
+repository to keep in sync — and treating "rewrite the whole archive on every
+commit, send the whole repository on every exchange" as free stops being
+true at that volume. See `contract/docs/adr/0018-storage-and-exchange-release-policy.md`
+onward for what changed, what was measured, and what's explicitly left as
+design-only until there's evidence for it.
 
 ## Why a burning bush?
 

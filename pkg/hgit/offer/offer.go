@@ -115,7 +115,7 @@ type builder struct {
 // .m, so an interrupted save leaves objects that `check` reports as dangling
 // and a HEAD that never moved.
 //
-// Any error returned after Append has been called at least once (a bad file
+// Any error returned after Store has been called at least once (a bad file
 // read partway through the walk, a name too long, ErrEntityID, ErrTooDeep, a
 // failed Save) leaves r's in-memory Arc/Meta already mutated with the
 // objects appended so far, even though nothing was necessarily saved to
@@ -257,7 +257,7 @@ func (b *builder) buildTree(relDir string, old *object.Tree, depth int) (*object
 		if len(child.Entries) == 0 {
 			continue
 		}
-		h := b.r.Append(archive.Tree, child.Encode())
+		h := b.r.Store(archive.Tree, child.Encode())
 		id := oldEntry.EntityID
 		if !foundOldSub {
 			if id = NewEntityID(); id == 0 {
@@ -294,7 +294,7 @@ func (b *builder) addFile(old *object.Tree, relDir, name string) (object.Entry, 
 	if err != nil {
 		return e, false, err
 	}
-	blob := b.r.Append(archive.Blob, content)
+	blob := b.r.Store(archive.Blob, content)
 
 	id, ok := CarryEntityID(b.r, old, name, blob, content)
 	if !ok {
@@ -328,7 +328,7 @@ func (b *builder) ignored(rel string) {
 func (b *builder) finish(p string, tree *object.Tree, parent archive.Hash, hasParent bool) (archive.Hash, error) {
 	var zero archive.Hash
 	c := &object.Commit{
-		Tree:           b.r.Append(archive.Tree, tree.Encode()),
+		Tree:           b.r.Store(archive.Tree, tree.Encode()),
 		Timestamp:      clock.Now(),
 		Message:        []byte(b.opts.Message),
 		Relation:       b.opts.Relation,
@@ -339,10 +339,10 @@ func (b *builder) finish(p string, tree *object.Tree, parent archive.Hash, hasPa
 		c.Parents = []archive.Hash{parent}
 	}
 	if len(b.list.Entries) > 0 {
-		h := b.r.Append(archive.Attrs, b.list.Encode())
+		h := b.r.Store(archive.Attrs, b.list.Encode())
 		c.Attrs = &h
 	}
-	commit := b.r.Append(archive.Commit, c.Encode())
+	commit := b.r.Store(archive.Commit, c.Encode())
 
 	// OpLogAppend: log the HEAD transition (all-zero prev for a root
 	// offering) and clear the redo log, since new work invalidates whatever

@@ -182,7 +182,7 @@ type walked struct {
 // append writes the walk's pending objects to the repository, in walk order.
 func (w walked) append(r *repo.Repo) {
 	for _, rec := range w.pending {
-		r.Append(rec.Type(), rec.Content())
+		r.Store(rec.Type(), rec.Content())
 	}
 }
 
@@ -550,16 +550,16 @@ func finish(r *repo.Repo, cur string, ours, theirs archive.Hash, otherPath, msgS
 		msg = append(msg, msgSuffix[i])
 	}
 	c := &object.Commit{
-		Tree:      r.Append(archive.Tree, w.tree.Encode()),
+		Tree:      r.Store(archive.Tree, w.tree.Encode()),
 		Parents:   []archive.Hash{ours, theirs}, // ours first, then theirs
 		Timestamp: clock.Now(),
 		Message:   msg,
 	}
 	if len(w.attrs.Entries) > 0 {
-		h := r.Append(archive.Attrs, w.attrs.Encode())
+		h := r.Store(archive.Attrs, w.attrs.Encode())
 		c.Attrs = &h
 	}
-	h := r.Append(archive.Commit, c.Encode())
+	h := r.Store(archive.Commit, c.Encode())
 	r.AppendOp(cur, meta.OpLogEntry{Timestamp: c.Timestamp, Prev: ours, New: h})
 	return h, r.SetHead(cur, h)
 }

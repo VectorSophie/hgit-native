@@ -106,15 +106,16 @@ func (r *Repo) Save() error {
 	return writeAtomic(r.Path+".m", m)
 }
 
-// Get returns a copy of the record for h.
+// Get returns the record for h (its first occurrence). The record is shared,
+// not copied: its Data is read-only (see archive.Record). Every caller only
+// reads it - decoders copy what they keep - and Data is capped at its own
+// end, so an append reallocates rather than touching another record.
 func (r *Repo) Get(h archive.Hash) (archive.Record, bool) {
 	i, ok := r.idx[h]
 	if !ok {
 		return archive.Record{}, false
 	}
-	rec := r.Arc.Records[i]
-	rec.Data = append([]byte(nil), rec.Data...)
-	return rec, true
+	return r.Arc.Records[i], true
 }
 
 // Append stores the object unconditionally, as the 1.8.9 ObjectPut does:

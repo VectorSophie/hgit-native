@@ -123,3 +123,52 @@ func TestParseEntityID(t *testing.T) {
 		}
 	}
 }
+
+func manyRecords(n int) []byte {
+	a := &Archive{Header: Header{Version: 4, Count: uint64(n)}}
+	for i := 0; i < n; i++ {
+		a.Records = append(a.Records, NewObject(Blob, bytes.Repeat([]byte{byte(i)}, 100+i%50)))
+	}
+	return a.Marshal()
+}
+
+// Records are views into the parsed buffer, not per-record copies.
+func TestParseDoesNotCopyEachRecord(t *testing.T) {
+	b := manyRecords(1000)
+	allocs := testing.AllocsPerRun(10, func() { Parse(b) })
+	if allocs > 50 {
+		t.Fatalf("%.0f allocations to parse 1000 records, want O(log n) for the slice only", allocs)
+	}
+}
+
+// A record's Data is capped at its own end, so appending to it (or to its
+// Content) reallocates and can never overwrite the next record.
+func TestParsedRecordCannotGrowIntoItsNeighbor(t *testing.T) {
+	b := manyRecords(3)
+	orig := append([]byte(nil), b...)
+	a, err := Parse(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range a.Records {
+		_ = append(a.Records[i].Data, 0xee, 0xee, 0xee)
+		_ = append(a.Records[i].Content(), 0xee, 0xee, 0xee)
+	}
+	if !bytes.Equal(b, orig) || !bytes.Equal(a.Marshal(), orig) {
+		t.Fatal("an append to one record changed the buffer")
+	}
+	if total, ok := a.Verify(); ok != total {
+		t.Fatalf("verify %d/%d", ok, total)
+	}
+}
+
+func BenchmarkParse(b *testing.B) {
+	raw := manyRecords(10000)
+	b.SetBytes(int64(len(raw)))
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := Parse(raw); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

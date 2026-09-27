@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -110,5 +111,39 @@ func TestLegacyDuplicatesKeptAndNewWritesDedupeAgainstThem(t *testing.T) {
 	}
 	if r.Arc.Records[0].Hash != r.Arc.Records[1].Hash {
 		t.Fatal("the legacy duplicate was removed")
+	}
+}
+
+// Get shares the stored bytes (no copy); growing a result - the only kind of
+// change a reader could plausibly make - reallocates and leaves every record,
+// and what Save writes, unchanged.
+func TestGrowingAGetResultCannotCorruptTheRepo(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "r.hgs")
+	if err := Init(p); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := Open(p)
+	hs := []archive.Hash{r.Store(archive.Blob, []byte("one")), r.Store(archive.Blob, []byte("two")), r.Store(archive.Tree, nil)}
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := os.ReadFile(p)
+	for _, fresh := range []bool{false, true} { // appended in memory, then parsed from disk
+		if fresh {
+			r, _ = Open(p)
+		}
+		for _, h := range hs {
+			rec, _ := r.Get(h)
+			_ = append(rec.Data, 0xee, 0xee)
+			_ = append(rec.Content(), 0xee, 0xee)
+		}
+		for _, h := range hs {
+			if rec, ok := r.Get(h); !ok || !rec.HashOK() {
+				t.Fatalf("record %x changed", h[:4])
+			}
+		}
+		if !bytes.Equal(r.Arc.Marshal(), orig) {
+			t.Fatal("the archive bytes changed")
+		}
 	}
 }

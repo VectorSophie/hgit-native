@@ -110,6 +110,13 @@ func (h Header) Marshal() []byte {
 }
 
 // Record is one archive record. Data includes the type-tag byte.
+//
+// Data is read-only. A record from Parse is a view into the buffer it was
+// parsed from, capped at its own end (so an append reallocates instead of
+// overwriting the next record), and writing into it changes that buffer and
+// every other view of the same bytes. Anything that needs to modify or keep
+// the bytes independently copies them first. A retained Record keeps the
+// whole parsed buffer alive.
 type Record struct {
 	Data []byte
 	Hash Hash
@@ -149,13 +156,15 @@ type Archive struct {
 
 // Parse reads the header, then records until EOF (as ArchiveVerify does; the
 // header count is exposed but not trusted). Every length is bounds-checked
-// before any allocation.
+// before any allocation. Records alias b (see Record): the caller hands b
+// over and must not modify it afterwards.
 func Parse(b []byte) (*Archive, error) {
 	h, err := ParseHeader(b)
 	if err != nil {
 		return nil, err
 	}
-	a := &Archive{Header: h}
+	// The header count only sizes the slice, bounded by what b can hold.
+	a := &Archive{Header: h, Records: make([]Record, 0, min(h.Count, uint64(len(b)-HeaderLen)/(8+HashLen)))}
 	pos := HeaderLen
 	for pos < len(b) {
 		if len(b)-pos < 8 {
@@ -168,8 +177,9 @@ func Parse(b []byte) (*Archive, error) {
 			return nil, ErrTruncated
 		}
 		var r Record
-		r.Data = append([]byte(nil), b[pos:pos+int(n)]...)
-		pos += int(n)
+		end := pos + int(n)
+		r.Data = b[pos:end:end]
+		pos = end
 		copy(r.Hash[:], b[pos:pos+HashLen])
 		pos += HashLen
 		a.Records = append(a.Records, r)

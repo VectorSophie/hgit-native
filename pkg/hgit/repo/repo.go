@@ -18,6 +18,17 @@ var (
 	ErrBrokenChain = errors.New("repo: broken chain")
 	ErrNotFound    = errors.New("repo: object not found")
 	ErrNameTooLong = errors.New("repo: path name longer than 63 bytes")
+
+	// ErrTorn is returned by Save when the repository was opened from a torn
+	// archive (ADR 0019 section 3: an interrupted write, or a file cut short
+	// by an interrupted portable-media copy, ADR 0020). The ADR says a writer
+	// must never append after a torn tail for offer/merge; this repo widens
+	// that to every write path, since Save rewrites the whole archive and any
+	// write only widens the gap between what's on disk and what's addressable
+	// until the tear is repaired. Run `compact` first - it reads what
+	// ParseTolerant could and writes a fresh, untorn archive - then Save
+	// again.
+	ErrTorn = errors.New("repo: archive has a torn tail - run compact first")
 )
 
 // NotTypeError reports an object found under a hash but of the wrong type.
@@ -35,7 +46,19 @@ type Repo struct {
 	// 0019). Off, Store is Append: the 1.8.9 ObjectPut, kept so that
 	// byte-exact reproduction of the 1.8.9 TempleOS output stays testable.
 	Dedup bool
+
+	// TornOffset and TornBytes report a torn tail found by Open (ADR 0019
+	// section 3): TornOffset is the file offset (header included) where the
+	// first record that did not fit starts, TornBytes is how many trailing
+	// bytes were left unconsumed. Both are 0 when the archive was not torn.
+	// Everything before TornOffset is committed data and fully usable; Save
+	// refuses (ErrTorn) until `compact` clears the tear.
+	TornOffset int
+	TornBytes  int
 }
+
+// Torn reports whether Open found a torn tail.
+func (r *Repo) Torn() bool { return r.TornBytes != 0 }
 
 // DefaultDedup is the Dedup every repository Open returns starts with.
 var DefaultDedup = true
@@ -55,7 +78,11 @@ func Open(path string) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	a, err := archive.Parse(raw)
+	// ParseTolerant, not Parse: a torn .hgs (an interrupted TempleOS write, or
+	// a file cut short by an interrupted portable-media copy, ADR 0020) opens
+	// successfully with everything before the tear usable, instead of failing
+	// outright (ADR 0019 section 3).
+	a, tornOffset, tornBytes, err := archive.ParseTolerant(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +94,8 @@ func Open(path string) (*Repo, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	r := &Repo{Path: path, Arc: a, Meta: m, idx: make(map[archive.Hash]int, len(a.Records)), Dedup: DefaultDedup}
+	r := &Repo{Path: path, Arc: a, Meta: m, idx: make(map[archive.Hash]int, len(a.Records)), Dedup: DefaultDedup,
+		TornOffset: tornOffset, TornBytes: tornBytes}
 	for i, rec := range a.Records {
 		if _, dup := r.idx[rec.Hash]; !dup { // first occurrence wins, as the linear scan did
 			r.idx[rec.Hash] = i
@@ -94,7 +122,11 @@ func writeAtomic(path string, b []byte) error {
 
 // Save writes .hgs first, then .m. Header.Count is synced to the record count.
 // Metadata that cannot be encoded fails before either file is touched.
+// Save refuses (ErrTorn) on a torn repository, touching nothing - see ErrTorn.
 func (r *Repo) Save() error {
+	if r.Torn() {
+		return ErrTorn
+	}
 	r.Arc.Header.Count = uint64(len(r.Arc.Records))
 	m, err := r.Meta.Marshal()
 	if err != nil {

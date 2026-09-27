@@ -367,6 +367,30 @@ func runCheck(c *ctx, a []string) int {
 	return ret
 }
 
+// runCompact rewrites the repository's archive with every distinct object
+// once (ADR 0019 section 5); see repo.Repo.Compact. Native-only: there is no
+// HolyC dispatch line to match, so the report shape here is this project's
+// own honest choice, not a parity token.
+func runCompact(c *ctx, a []string) int {
+	r, ok := c.open("COMPACT", a[0])
+	if !ok {
+		return ExitFail
+	}
+	before := len(r.Arc.Records)
+	err := r.Compact()
+	if errors.Is(err, repo.ErrNothingToCompact) {
+		c.say("COMPACT_NOTHING_TO_COMPACT\n", "Nothing to compact: no torn tail and no duplicate records.\n")
+		return ExitOK
+	}
+	if err != nil {
+		return c.fail("COMPACT_ERR bad_object\n", "compact: "+err.Error())
+	}
+	after := len(r.Arc.Records)
+	c.say(fmt.Sprintf("COMPACT_OK objects=%d removed=%d\n", after, before-after),
+		fmt.Sprintf("Compacted %s: %d objects (%d duplicate/torn record(s) removed).\n", a[0], after, before-after))
+	return ExitOK
+}
+
 // --- merge and its conflict lifecycle -----------------------------------
 
 func mergeCode(res merge.Result, err error) int {

@@ -158,33 +158,60 @@ type Archive struct {
 // header count is exposed but not trusted). Every length is bounds-checked
 // before any allocation. Records alias b (see Record): the caller hands b
 // over and must not modify it afterwards.
+//
+// Parse is strict: any record that does not fully fit is ErrTruncated, all
+// or nothing. Callers that want to keep what comes before an interrupted
+// write (a torn tail, ADR 0019 section 3) use ParseTolerant instead - bundle's
+// own object-record decoding is a different, intentionally strict context
+// (BUNDLE.md) and keeps using Parse's all-or-nothing behavior.
 func Parse(b []byte) (*Archive, error) {
-	h, err := ParseHeader(b)
+	a, _, tornBytes, err := ParseTolerant(b)
 	if err != nil {
 		return nil, err
 	}
+	if tornBytes != 0 {
+		return nil, ErrTruncated
+	}
+	return a, nil
+}
+
+// ParseTolerant reads the header, then records until EOF or the first record
+// that does not structurally fit (the same bounds check Parse uses - no
+// length is ever trusted for an allocation). It never errors on a torn tail:
+// everything before it is returned as committed data, and tornOffset/
+// tornBytes report where the tear starts (a byte offset from the start of b,
+// header included) and how many trailing bytes were left unconsumed. Both
+// are 0 when nothing is torn. A record that fits but has a bad stored hash
+// is not torn (see Verify) - only a header parse failure (bad magic,
+// unsupported version, too short) is still a hard error.
+func ParseTolerant(b []byte) (a *Archive, tornOffset, tornBytes int, err error) {
+	h, err := ParseHeader(b)
+	if err != nil {
+		return nil, 0, 0, err
+	}
 	// The header count only sizes the slice, bounded by what b can hold.
-	a := &Archive{Header: h, Records: make([]Record, 0, min(h.Count, uint64(len(b)-HeaderLen)/(8+HashLen)))}
+	a = &Archive{Header: h, Records: make([]Record, 0, min(h.Count, uint64(len(b)-HeaderLen)/(8+HashLen)))}
 	pos := HeaderLen
 	for pos < len(b) {
 		if len(b)-pos < 8 {
-			return nil, ErrTruncated
+			return a, pos, len(b) - pos, nil
 		}
 		n := binary.LittleEndian.Uint64(b[pos:])
-		pos += 8
-		remain := uint64(len(b) - pos)
+		next := pos + 8
+		remain := uint64(len(b) - next)
 		if n > remain || remain-n < HashLen {
-			return nil, ErrTruncated
+			return a, pos, len(b) - pos, nil
 		}
 		var r Record
-		end := pos + int(n)
-		r.Data = b[pos:end:end]
-		pos = end
-		copy(r.Hash[:], b[pos:pos+HashLen])
-		pos += HashLen
+		end := next + int(n)
+		r.Data = b[next:end:end]
+		next = end
+		copy(r.Hash[:], b[next:next+HashLen])
+		next += HashLen
 		a.Records = append(a.Records, r)
+		pos = next
 	}
-	return a, nil
+	return a, 0, 0, nil
 }
 
 func (a *Archive) Marshal() []byte {

@@ -30,6 +30,11 @@ type Report struct {
 	RefsBroken    int
 	Broken        []BrokenRef
 	Dangling      []DanglingObj
+
+	// TornOffset/TornBytes mirror repo.Repo's own fields (ADR 0019 section
+	// 3): TornBytes is 0 when the archive was not torn.
+	TornOffset int
+	TornBytes  int
 }
 
 type checker struct {
@@ -91,7 +96,8 @@ func refs(t archive.Type, content []byte) (out []archive.Hash, ok bool) {
 
 // Run checks r. The order of Broken and Dangling matches Check.HC.
 func Run(r *repo.Repo) Report {
-	rep := Report{Objects: len(r.Arc.Records), FormatVersion: r.Arc.Header.Version, HeaderCount: r.Arc.Header.Count}
+	rep := Report{Objects: len(r.Arc.Records), FormatVersion: r.Arc.Header.Version, HeaderCount: r.Arc.Header.Count,
+		TornOffset: r.TornOffset, TornBytes: r.TornBytes}
 	c := &checker{r, &rep}
 	for _, rec := range r.Arc.Records {
 		if !rec.HashOK() {

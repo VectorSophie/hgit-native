@@ -117,6 +117,9 @@ var checkKinds = map[archive.Type]string{archive.Commit: "commit", archive.Tree:
 
 func humanCheck(rep check.Report) string {
 	var b strings.Builder
+	if rep.TornBytes != 0 {
+		fmt.Fprintf(&b, "warning: torn tail at offset %d (%d bytes ignored) - an interrupted write; run 'hgit compact' to repair\n", rep.TornOffset, rep.TornBytes)
+	}
 	if uint64(rep.Objects) != rep.HeaderCount {
 		fmt.Fprintf(&b, "warning: the header counts %d objects, the archive holds %d\n", rep.HeaderCount, rep.Objects)
 	}

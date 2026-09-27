@@ -170,15 +170,25 @@ func TestOpenErrors(t *testing.T) {
 	if _, err := Open(write("magic.hgs", append([]byte("XXXX"), good[4:]...))); !errors.Is(err, archive.ErrBadMagic) {
 		t.Fatalf("magic: %v", err)
 	}
-	if _, err := Open(write("trunc.hgs", good[:len(good)-10])); !errors.Is(err, archive.ErrTruncated) {
+	// A torn tail (ADR 0019 section 3) opens successfully - it is no longer
+	// a hard error - and reports where it was cut. TestTornOpen covers the
+	// full torn-repository contract; this only pins that Open itself no
+	// longer refuses.
+	trunc := good[:len(good)-10]
+	tr, err := Open(write("trunc.hgs", trunc))
+	if err != nil {
 		t.Fatalf("trunc: %v", err)
+	}
+	if !tr.Torn() || tr.TornBytes == 0 || tr.TornOffset+tr.TornBytes != len(trunc) {
+		t.Fatalf("trunc: want a torn repo covering the whole truncated tail, got offset=%d bytes=%d len=%d",
+			tr.TornOffset, tr.TornBytes, len(trunc))
 	}
 	p := write("badm.hgs", good)
 	os.WriteFile(p+".m", []byte{5, 'a'}, 0o644)
 	if _, err := Open(p); !errors.Is(err, meta.ErrMalformed) {
 		t.Fatalf("meta: %v", err)
 	}
-	_, err := Open(write("newer.hgs", testfix.Read(t, "TFConfNewer.hgs")))
+	_, err = Open(write("newer.hgs", testfix.Read(t, "TFConfNewer.hgs")))
 	var uv *archive.UnsupportedVersionError
 	if !errors.As(err, &uv) {
 		t.Fatalf("newer: %v", err)

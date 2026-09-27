@@ -96,6 +96,7 @@ func init() {
 		{"see", "<repo_path> <commit_hex>", 2, 2, false, runSee},
 		{"diff", "<repo_path> <commit_hex>", 2, 2, false, runDiff},
 		{"check", "<repo_path>", 1, 1, false, runCheck},
+		{"compact", "<repo_path>", 1, 1, false, runCompact},
 		{"historydoc", "<repo_path> [<dest_file>]", 1, 2, false, runHistoryDoc},
 		{"reconciledoc", "<repo_path> <commit_hex> [<dest_file>]", 2, 3, false, runReconcileDoc},
 		{"reconcileoverview", "<repo_path> [<dest_file>]", 1, 2, false, runReconcileOverview},

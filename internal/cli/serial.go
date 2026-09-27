@@ -96,6 +96,9 @@ func SerialCheck(rep check.Report, openErr error) string {
 		return "CHECK_ERR bad_header\n"
 	}
 	var b strings.Builder
+	if rep.TornBytes != 0 {
+		fmt.Fprintf(&b, "CHECK_WARN torn_tail offset=%d bytes=%d\n", rep.TornOffset, rep.TornBytes)
+	}
 	if uint64(rep.Objects) != rep.HeaderCount {
 		fmt.Fprintf(&b, "CHECK_WARN object_count_mismatch header=%d scanned=%d\n", rep.HeaderCount, rep.Objects)
 	}

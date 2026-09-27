@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>hgit-native</id>
+    <version>1.9.0</version>
+    <title>hgit-native</title>
+    <authors>VectorSophie</authors>
+    <projectUrl>https://github.com/VectorSophie/hgit-native</projectUrl>
+    <licenseUrl>https://www.gnu.org/licenses/gpl-3.0.html</licenseUrl>
+    <iconUrl>https://raw.githubusercontent.com/VectorSophie/hgit-native/main/docs/brand/hgitlogo.png</iconUrl>
+    <copyright>GPL-3.0-or-later</copyright>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/VectorSophie/hgit-native</projectSourceUrl>
+    <bugTrackerUrl>https://github.com/VectorSophie/hgit-native/issues</bugTrackerUrl>
+    <packageSourceUrl>https://github.com/VectorSophie/hgit-native/tree/main/packaging/chocolatey</packageSourceUrl>
+    <releaseNotes>https://github.com/VectorSophie/hgit-native/releases/tag/v1.9.0</releaseNotes>
+    <tags>hgit vcs version-control cli git-alternative</tags>
+    <summary>hgit for Windows: a normal executable, no VM, no TempleOS</summary>
+    <description>hgit-native is a native Go port of hgit (the version-control system originally written in HolyC for TempleOS): persistent file identity, truthful non-destructive history, typed relations between commits, and a rename-aware three-way merge. This package installs a single `hgit.exe` - no QEMU, no Python, no TempleOS disk image; unlike the separate `hgit` package (the original TempleOS product), nothing here runs in a VM. See https://github.com/VectorSophie/hgit-native for the command reference and https://github.com/VectorSophie/hgit for the project this ports.</description>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

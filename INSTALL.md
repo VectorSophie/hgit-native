@@ -13,12 +13,14 @@ once they do.
 
 | Platform | Planned channel |
 |---|---|
-| Windows | `choco install hgit`, or download `hgit.exe` from a release |
-| macOS | `brew install VectorSophie/hgit/hgit`, or download the binary |
-| Debian / Ubuntu | `sudo apt install ./hgit_<version>_<arch>.deb` from a release |
+| Windows | `choco install hgit-native`, or download `hgit.exe` from a release |
+| macOS | `brew install VectorSophie/hgit-native/hgit-native`, or download the binary |
+| Debian / Ubuntu | `sudo apt install ./hgit-native_<version>_<arch>.deb` from a release |
 | Any | `go install github.com/VectorSophie/hgit-native/cmd/hgit@latest` (Go 1.22+) |
 
-The package name is `hgit`.
+The package name is `hgit-native` on every channel (`hgit` was already taken
+by the original TempleOS project's own Chocolatey package by the time this
+one shipped); the installed binary itself is still called `hgit`.
 
 ## Building from source
 

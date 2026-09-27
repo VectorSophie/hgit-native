@@ -6,6 +6,7 @@
 //
 //	go run ./tools/bench -scenario s1 -out results.jsonl
 //	go run ./tools/bench -report results.jsonl
+//	go run ./tools/bench -report before.jsonl,after.jsonl
 //
 // Scenarios (see docs/benchmarks/README.md for the methodology):
 //
@@ -83,7 +84,7 @@ var (
 	flagDir      = flag.String("dir", "", "working directory root (default: a temp dir)")
 	flagRuns     = flag.Int("runs", 3, "timing repetitions; the median is reported")
 	flagQuick    = flag.Bool("quick", false, "smaller sizes for a smoke run")
-	flagReport   = flag.String("report", "", "render a JSON-lines results file as markdown and exit")
+	flagReport   = flag.String("report", "", "render JSON-lines results file(s) as markdown and exit; several, comma-separated, are compared row by row")
 	flagVariant  = flag.String("variant", "", "label stored in every sample (e.g. baseline, dedup)")
 )
 
@@ -605,32 +606,45 @@ func s6(root string, emit func(Sample)) {
 
 // ---- report ----------------------------------------------------------------
 
-func report(path string) error {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
+// report renders one results file, or several (comma-separated) as a
+// before/after comparison: the rows for the same measurement point, one per
+// file in the order given, are printed next to each other.
+func report(paths string) error {
 	var rows []Sample
-	for _, ln := range strings.Split(strings.TrimSpace(string(b)), "\n") {
-		if ln == "" {
-			continue
-		}
-		var s Sample
-		if err := json.Unmarshal([]byte(ln), &s); err != nil {
+	for _, path := range strings.Split(paths, ",") {
+		b, err := os.ReadFile(path)
+		if err != nil {
 			return err
 		}
-		rows = append(rows, s)
+		for _, ln := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			if ln == "" {
+				continue
+			}
+			var s Sample
+			if err := json.Unmarshal([]byte(ln), &s); err != nil {
+				return err
+			}
+			rows = append(rows, s)
+		}
 	}
-	fmt.Println("| scen | variant | commits | .hgs bytes | records | unique | stored / floor | working set | open ms | offer ms | save ms | status ms | history ms | check ms | open heap |")
-	fmt.Println("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+	key := func(s Sample) string { return fmt.Sprint(s.Scenario, s.Note, s.Commits, s.Behind) }
+	first := map[string]int{}
+	for i, s := range rows {
+		if _, ok := first[key(s)]; !ok {
+			first[key(s)] = i
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return first[key(rows[i])] < first[key(rows[j])] })
+	fmt.Println("| scen | variant | commits | .hgs bytes | records | unique | stored / floor | working set | open ms | offer ms | save ms | status ms | history ms | check ms | open alloc | open heap |")
+	fmt.Println("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 	for _, s := range rows {
 		if s.Scenario == "s6" {
 			continue
 		}
 		ratio := float64(s.HgsBytes) / float64(s.FloorBytes)
-		fmt.Printf("| %s | %s | %d | %d | %d | %d | %.1fx | %d | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %d |\n",
+		fmt.Printf("| %s | %s | %d | %d | %d | %d | %.1fx | %d | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %d | %d |\n",
 			s.Scenario, s.Variant, s.Commits, s.HgsBytes, s.Records, s.Unique, ratio, s.WorkBytes,
-			s.OpenMs, s.OfferMs, s.SaveMs, s.StatusMs, s.HistoryMs, s.CheckMs, s.OpenHeap)
+			s.OpenMs, s.OfferMs, s.SaveMs, s.StatusMs, s.HistoryMs, s.CheckMs, s.OpenAlloc, s.OpenHeap)
 	}
 	fmt.Println()
 	fmt.Println("| variant | commits | replica behind | whole export/import bytes | records the replica lacks | floor bytes | whole / floor |")

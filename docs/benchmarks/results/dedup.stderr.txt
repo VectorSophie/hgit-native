@@ -1,0 +1,20 @@
+bench: go=go1.22.2 linux/amd64 cpus=8 dir=/tmp/hgit-bench-2168955791
+s1  commits=1     hgs=21454       records=7       unique=7      open=0.0ms offer=0.3ms check=0.1ms
+s1  commits=10    hgs=64738       records=34      unique=34     open=0.0ms offer=0.3ms check=0.3ms
+s1  commits=100   hgs=461097      records=304     unique=304    open=0.2ms offer=0.9ms check=1.5ms
+s1  commits=300   hgs=1172326     records=904     unique=904    open=0.8ms offer=3.4ms check=4.7ms
+s1  commits=1000  hgs=2985685     records=3004    unique=3004   open=2.8ms offer=8.7ms check=11.5ms
+s2  commits=1     hgs=3397085     records=2102    unique=2102   open=2.4ms offer=40.8ms check=8.1ms
+s2  commits=15    hgs=3652131     records=2214    unique=2214   open=3.3ms offer=33.6ms check=10.0ms
+s2  commits=30    hgs=3920598     records=2334    unique=2334   open=4.6ms offer=38.5ms check=11.2ms
+s2  commits=1     hgs=16967071    records=10202   unique=10202  open=10.6ms offer=227.4ms check=35.2ms
+s2  commits=2     hgs=17000573    records=10210   unique=10210  open=12.9ms offer=182.7ms check=38.0ms
+s2  commits=5     hgs=17099457    records=10234   unique=10234  open=11.8ms offer=172.0ms check=39.9ms
+s3  commits=1     hgs=60790       records=11      unique=11     open=0.0ms offer=7.0ms check=0.4ms
+s3  commits=20    hgs=894404      records=68      unique=68     open=0.5ms offer=10.0ms check=8.1ms
+s4  commits=110   hgs=319791      records=332     unique=332    open=0.1ms offer=1.8ms check=1.4ms
+s5  commits=1     hgs=10486973    records=8       unique=8      open=5.2ms offer=56.7ms check=16.1ms
+s5  commits=10    hgs=29368965    records=35      unique=35     open=11.3ms offer=84.2ms check=57.2ms
+s6  commits=1000  hgs=3007801     records=3004    unique=0      open=0.0ms offer=0.0ms check=0.0ms
+s6  commits=1000  hgs=3007801     records=3004    unique=0      open=0.0ms offer=0.0ms check=0.0ms
+s6  commits=1000  hgs=3007801     records=3004    unique=0      open=0.0ms offer=0.0ms check=0.0ms

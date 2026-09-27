@@ -4,6 +4,38 @@ Deviations from the HolyC original, known gaps, and findings made while
 porting. Newest first; entries are dated. Starts with what is known before any
 Go is written.
 
+## 2026-09-27: objects stored once (ADR 0019), with a legacy-append mode
+
+- **Writers store each object once.** Commands now write through
+  `Repo.Store` instead of `Repo.Append`. With `Repo.Dedup` on - the default,
+  copied from `repo.DefaultDedup` by `Open` - an object whose hash the
+  archive already holds (loaded from disk, or stored earlier by the same
+  command) is not appended again; every other object is appended exactly as
+  before, in the same order, so skipping removes records and never reorders
+  the rest. This is ADR 0019 section 1, ahead of the TempleOS writer: the
+  contract pin still says 1.8.9, whose `ObjectPut` appends unconditionally,
+  so on a new repository `CHECK_OK objects=N` now reports a smaller `N` than
+  1.8.9 TempleOS would for the same commands. The format is unchanged
+  (`format_version` 4): 1.8.9 reads what this writes, and an existing archive
+  keeps its duplicate records and its count; new writes dedupe against them.
+  `Save` still writes the exact record count as the header count.
+- **Legacy mode keeps 1.8.9 parity testable.** `Append` is kept as the
+  unconditional primitive and `Store` falls back to it when `Dedup` is off.
+  Every `tests/` scenario that replays the 1.8.9 TempleOS output (offer,
+  offertree, status, diff, merge, conflict, ops, views, the full replay)
+  pins legacy mode locally with `t.Cleanup(repo.SetDefaultDedup(false))`,
+  so its assertions, object counts included, are exactly what they were;
+  none was loosened, and `contract/` is untouched. Parity holds because
+  legacy mode is the old code path, byte for byte, and a new test proves
+  the dedup archive equals the legacy archive with its repeated records
+  dropped. When the contract pin moves to the 1.9 fixtures, the 1.9
+  scenarios run in the default mode and the 1.8.9 ones stay in legacy mode.
+- **Zero-copy parse.** `archive.Parse` no longer copies each record out of
+  the read buffer: `Record.Data` is a sub-slice capped at its own end (an
+  append reallocates, it cannot overwrite the next record) and is read-only.
+  `Repo.Get` no longer copies either; every caller only reads the result.
+  Measurements are in `docs/benchmarks/README.md`.
+
 ## 2026-09-24: pillar C, and a push-protocol byte collision
 
 - **Pillar C passes.** `tools/interop.py` pushes a `cmd/hgit`-built

@@ -149,12 +149,18 @@ func (c *ctx) doOffer(cmd, repoPath, work, mask string, tree bool, opts offer.Op
 		abs = p
 	}
 	opts.OnIgnored = func(name string) {
-		// TempleOS printed full_name with forward slashes always (it has no
-		// concept of a backslash path); filepath.Join uses the OS-native
-		// separator, which mixes a backslash in on Windows even when abs
-		// itself is already forward-slash form. Build the printed path with
-		// "/" explicitly so --serial output never depends on the host OS.
-		p := strings.TrimRight(filepath.ToSlash(abs), "/") + "/" + name
+		// name (the ignored file's path relative to the offered root) is
+		// always forward-slash, matching TempleOS convention (see
+		// offer.builder.ignored, fed by path.Join, never filepath.Join).
+		// filepath.Join would rejoin it to abs using the OS-native
+		// separator, mixing one backslash into an otherwise-native path on
+		// Windows - neither a real native path nor the forward-slash form
+		// name already is. abs itself is left in its native form: it is a
+		// real absolute path a Windows user should see natural separators
+		// in, and full_replay_test.go's own normalization matches a real
+		// temp-dir prefix back to a synthetic "C:/Home/" by literal string
+		// substitution, which depends on abs staying in native form here.
+		p := strings.TrimRight(abs, string(filepath.Separator)) + "/" + name
 		c.say("OFFER_IGNORED "+p+"\n", "ignored "+p+"\n")
 	}
 	var h archive.Hash

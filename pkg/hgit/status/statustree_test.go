@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -252,6 +253,9 @@ func TestStatusTreeUnreadableFileTypedError(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root ignores file permissions")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Chmod(path, 0) only clears the read-only attribute on Windows; it never blocks the owning process from reading its own file, so this simulation technique doesn't apply there")
+	}
 	f := setup(t)
 	f.writeIgnore("")
 	f.write("a.txt", "hi")
@@ -270,6 +274,12 @@ func TestStatusTreeUnreadableFileTypedError(t *testing.T) {
 }
 
 func TestStatusTreeTooDeep(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		// See offer.TestOfferTreeDepthLimit's identical comment: statustree's
+		// own recursion has the same absolute-root-anchored shape, so the
+		// same macOS PATH_MAX ceiling applies here too.
+		t.Skip("macOS's PATH_MAX (1024) cannot hold MaxTreeDepth levels of real directories")
+	}
 	f := setup(t)
 	f.writeIgnore("")
 	f.write("root.txt", "x")

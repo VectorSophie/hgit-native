@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -415,6 +416,9 @@ func TestStatusEmptyRepoNoOfferingsYet(t *testing.T) {
 func TestStatusUnreadableFileTypedError(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root ignores file permissions")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Chmod(path, 0) only clears the read-only attribute on Windows; it never blocks the owning process from reading its own file, so this simulation technique doesn't apply there")
 	}
 	f := setup(t)
 	f.writeIgnore("")

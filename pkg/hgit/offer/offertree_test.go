@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -258,6 +259,9 @@ func TestOfferTreeUnreadableFileIsATypedError(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads anything")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Chmod(path, 0) only clears the read-only attribute on Windows; it never blocks the owning process from reading its own file, so this simulation technique doesn't apply there")
+	}
 	f := setup(t)
 	f.writeIgnore("")
 	f.mkdir("SubA")
@@ -365,6 +369,16 @@ func TestOfferTreeRelationCommit(t *testing.T) {
 }
 
 func TestOfferTreeDepthLimit(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		// MaxTreeDepth+1 levels of even a 1-byte directory name is already
+		// longer than macOS's own PATH_MAX (1024): buildTree's own recursion
+		// anchors every level to the absolute offered root, so a real
+		// filesystem here hits the OS's "file name too long" from a plain
+		// os.ReadDir well before depth ever reaches the guard this test
+		// means to exercise - there is no fixture construction that reaches
+		// MaxTreeDepth on this OS without first hitting that ceiling.
+		t.Skip("macOS's PATH_MAX (1024) cannot hold MaxTreeDepth levels of real directories")
+	}
 	f := setup(t)
 	f.writeIgnore("")
 	deep := ""

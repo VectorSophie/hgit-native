@@ -149,7 +149,12 @@ func (c *ctx) doOffer(cmd, repoPath, work, mask string, tree bool, opts offer.Op
 		abs = p
 	}
 	opts.OnIgnored = func(name string) {
-		p := filepath.Join(abs, filepath.FromSlash(name)) // TempleOS printed full_name
+		// TempleOS printed full_name with forward slashes always (it has no
+		// concept of a backslash path); filepath.Join uses the OS-native
+		// separator, which mixes a backslash in on Windows even when abs
+		// itself is already forward-slash form. Build the printed path with
+		// "/" explicitly so --serial output never depends on the host OS.
+		p := strings.TrimRight(filepath.ToSlash(abs), "/") + "/" + name
 		c.say("OFFER_IGNORED "+p+"\n", "ignored "+p+"\n")
 	}
 	var h archive.Hash

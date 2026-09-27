@@ -124,36 +124,32 @@ func (r *Repo) Get(h archive.Hash) (archive.Record, bool) {
 // keeps pointing at the first occurrence, so Get stays stable - duplicate
 // records are byte-identical by construction. Commands write through Store,
 // which falls back to this in legacy mode.
-func (r *Repo) Append(t archive.Type, content []byte) archive.Hash {
-	rec := archive.NewObject(t, content)
-	if _, ok := r.idx[rec.Hash]; !ok {
-		r.idx[rec.Hash] = len(r.Arc.Records)
-	}
-	r.Arc.Records = append(r.Arc.Records, rec)
-	r.Arc.Header.Count = uint64(len(r.Arc.Records))
-	return rec.Hash
-}
+func (r *Repo) Append(t archive.Type, content []byte) archive.Hash { return r.add(t, content, false) }
 
 // Store is ObjectPut, the one way commands write objects. With Dedup on
 // (ADR 0019 section 1) an object whose hash the archive already holds -
 // loaded from disk or stored earlier by this same command - is not appended
 // again; every other object is appended exactly as Append does, so skipping
 // removes records and never reorders the rest. With Dedup off it is Append.
-func (r *Repo) Store(t archive.Type, content []byte) archive.Hash {
-	if !r.Dedup {
-		return r.Append(t, content)
-	}
-	return r.Put(t, content)
-}
+func (r *Repo) Store(t archive.Type, content []byte) archive.Hash { return r.add(t, content, r.Dedup) }
 
 // Put always deduplicates, whatever Dedup says: tests use it to build
 // repositories without caring about the mode.
-func (r *Repo) Put(t archive.Type, content []byte) archive.Hash {
+func (r *Repo) Put(t archive.Type, content []byte) archive.Hash { return r.add(t, content, true) }
+
+// add hashes once, then appends unless dedup is set and the hash is present.
+func (r *Repo) add(t archive.Type, content []byte, dedup bool) archive.Hash {
 	rec := archive.NewObject(t, content)
 	if _, ok := r.idx[rec.Hash]; ok {
-		return rec.Hash
+		if dedup {
+			return rec.Hash
+		}
+	} else {
+		r.idx[rec.Hash] = len(r.Arc.Records)
 	}
-	return r.Append(t, content)
+	r.Arc.Records = append(r.Arc.Records, rec)
+	r.Arc.Header.Count = uint64(len(r.Arc.Records))
+	return rec.Hash
 }
 
 // CurrentPath is the current path's name, "main" if unset.

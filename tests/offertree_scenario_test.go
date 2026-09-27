@@ -105,7 +105,7 @@ func TestScenarioOfferTreeReplaysRegression(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fix := openFixture(t, "TFullTreeRepo.hgs")
+	fix := openLegacyFixture(t, "TFullTreeRepo.hgs")
 
 	// Strongest available parity evidence: every record this port wrote is
 	// byte-identical to the one TempleOS wrote, in the same order - blobs,
@@ -165,7 +165,7 @@ func TestScenarioOfferTreeReplaysRegression(t *testing.T) {
 		t.Fatalf("check report = %+v", rep)
 	}
 	gotCheck := cli.SerialCheck(rep, nil)
-	wantCheck := segment(t, testfix.ExpectedLog(t), "TFULL_CHECK_TREE_BEGIN", "TFULL_CHECK_TREE_END_MARKER")
+	wantCheck := segment(t, testfix.LegacyExpectedLog(t), "TFULL_CHECK_TREE_BEGIN", "TFULL_CHECK_TREE_END_MARKER")
 	var wantObjects int
 	if _, err := fmt.Sscanf(wantCheck, "CHECK_OK objects=%d", &wantObjects); err != nil {
 		t.Fatalf("cannot read the expected object count from %q: %v", wantCheck, err)
@@ -233,7 +233,7 @@ func TestScenarioOfferTreeReplaysIgnoreStep(t *testing.T) {
 	}
 
 	rep := check.Run(r)
-	wantCheck := segment(t, testfix.ExpectedLog(t), "TFULL_IGNORE_CHECK_BEGIN", "TFULL_IGNORE_CHECK_END_MARKER")
+	wantCheck := segment(t, testfix.LegacyExpectedLog(t), "TFULL_IGNORE_CHECK_BEGIN", "TFULL_IGNORE_CHECK_END_MARKER")
 	var wantObjects int
 	if _, err := fmt.Sscanf(wantCheck, "CHECK_OK objects=%d", &wantObjects); err != nil {
 		t.Fatal(err)

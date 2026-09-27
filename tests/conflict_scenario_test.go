@@ -67,7 +67,7 @@ func TestScenarioConflictAbortReplaysRegression(t *testing.T) {
 	got.WriteString(f.mergeAbort())
 	got.WriteString(f.conflicts())
 
-	want := segment(t, testfix.ExpectedLog(t), "TFULL_CONFLICT_ABORT_BEGIN", "TFULL_CONFLICT_ABORT_END_MARKER")
+	want := segment(t, testfix.LegacyExpectedLog(t), "TFULL_CONFLICT_ABORT_BEGIN", "TFULL_CONFLICT_ABORT_END_MARKER")
 	want = dropLines(want, "DISPATCH_OK ")
 	if normalize(trim(got.String())) != normalize(want) {
 		t.Fatalf("TFULL_CONFLICT_ABORT mismatch:\ngot:\n%s\nwant:\n%s", trim(got.String()), want)
@@ -94,7 +94,7 @@ func TestScenarioConflictMergeReplaysRegression(t *testing.T) {
 	got.WriteString(f.check())
 	got.WriteString(f.mergeAbort())
 
-	want := segment(t, testfix.ExpectedLog(t), "TFULL_CONFLICT_MERGE_BEGIN", "TFULL_CONFLICT_MERGE_END_MARKER")
+	want := segment(t, testfix.LegacyExpectedLog(t), "TFULL_CONFLICT_MERGE_BEGIN", "TFULL_CONFLICT_MERGE_END_MARKER")
 	gotText := trim(got.String())
 	if normalize(gotText) != normalize(want) {
 		t.Fatalf("TFULL_CONFLICT_MERGE mismatch:\ngot:\n%s\nwant:\n%s", gotText, want)

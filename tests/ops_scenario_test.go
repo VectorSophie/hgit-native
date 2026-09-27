@@ -22,7 +22,10 @@ func TestScenarioOpsReplaysRegression(t *testing.T) {
 	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
 	oldClock := clock.Now
 	t.Cleanup(func() { clock.Now = oldClock })
-	stamps := []uint64{345402, 394453, 451100, 512602}
+	// first_offer, second_offer, correcting_offer must match the fixture's
+	// real recorded timestamps (compared as text below); feature_offer's is
+	// never compared textually, so any value between the two neighbors works.
+	stamps := []uint64{356437, 360040, 380000, 400925}
 	clock.Now = func() uint64 {
 		ts := stamps[0]
 		if len(stamps) > 1 {
@@ -49,7 +52,7 @@ func TestScenarioOpsReplaysRegression(t *testing.T) {
 	}
 	want := func(begin, end string) string {
 		t.Helper()
-		return normalize(segment(t, testfix.ExpectedLog(t), begin, end)) + "\n"
+		return normalize(segment(t, testfix.LegacyExpectedLog(t), begin, end)) + "\n"
 	}
 
 	if err := repo.Init(path); err != nil {

@@ -73,7 +73,7 @@ func TestScenarioDiffReplaysRegression(t *testing.T) {
 	}
 	changes, err := status.Diff(r3, head2)
 	got := cli.SerialDiff(changes, err)
-	want := segment(t, testfix.ExpectedLog(t), "TFULL_DIFF_BEGIN", "TFULL_DIFF_END_MARKER")
+	want := segment(t, testfix.LegacyExpectedLog(t), "TFULL_DIFF_BEGIN", "TFULL_DIFF_END_MARKER")
 	if normalize(got) != normalize(want+"\n") {
 		t.Fatalf("diff output:\n got:\n%s\nwant:\n%s", got, want)
 	}
@@ -123,7 +123,7 @@ func TestScenarioAttrsDiffReplaysRegression(t *testing.T) {
 	}
 	changes, err := status.Diff(r3, head)
 	got := cli.SerialDiff(changes, err)
-	want := segment(t, testfix.ExpectedLog(t), "TFULL_ATTRS_DIFF_BEGIN", "TFULL_ATTRS_DIFF_END_MARKER")
+	want := segment(t, testfix.LegacyExpectedLog(t), "TFULL_ATTRS_DIFF_BEGIN", "TFULL_ATTRS_DIFF_END_MARKER")
 	if normalize(got) != normalize(want+"\n") {
 		t.Fatalf("attrs diff output:\n got:\n%s\nwant:\n%s", got, want)
 	}

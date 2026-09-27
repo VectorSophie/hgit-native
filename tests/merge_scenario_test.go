@@ -99,7 +99,7 @@ func (f *mergeFx) check() string {
 // wantSegment compares got against one segment of the golden log.
 func wantSegment(t *testing.T, got, begin, end string) {
 	t.Helper()
-	want := segment(t, testfix.ExpectedLog(t), begin, end)
+	want := segment(t, testfix.LegacyExpectedLog(t), begin, end)
 	if normalize(trim(got)) != normalize(want) {
 		t.Fatalf("%s mismatch:\ngot:\n%s\nwant:\n%s", begin, trim(got), want)
 	}

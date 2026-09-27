@@ -119,7 +119,7 @@ func TestScenarioOfferReplaysRegression(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fix := openFixture(t, "TFullRepo.hgs")
+	fix := openLegacyFixture(t, "TFullRepo.hgs")
 
 	// (c) history
 	lines, err := r.History()
@@ -199,7 +199,7 @@ func TestScenarioOfferReplaysRegression(t *testing.T) {
 		t.Fatalf("check report = %+v", rep)
 	}
 	gotCheck := cli.SerialCheck(rep, nil)
-	wantCheck := segment(t, testfix.ExpectedLog(t), "TFULL_CHECK_BEGIN", "TFULL_CHECK_END_MARKER")
+	wantCheck := segment(t, testfix.LegacyExpectedLog(t), "TFULL_CHECK_BEGIN", "TFULL_CHECK_END_MARKER")
 	var wantObjects int
 	if _, err := fmt.Sscanf(wantCheck, "CHECK_OK objects=%d", &wantObjects); err != nil {
 		t.Fatalf("cannot read the expected object count from %q: %v", wantCheck, err)

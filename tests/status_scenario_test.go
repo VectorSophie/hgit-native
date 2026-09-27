@@ -70,7 +70,7 @@ func TestScenarioStatusReplaysRegression(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := cli.SerialStatus(changes, err)
-	want := segment(t, testfix.ExpectedLog(t), "TFULL_STATUS_BEGIN", "TFULL_STATUS_END_MARKER")
+	want := segment(t, testfix.LegacyExpectedLog(t), "TFULL_STATUS_BEGIN", "TFULL_STATUS_END_MARKER")
 	if normalize(got) != normalize(want+"\n") {
 		t.Fatalf("status output:\n got:\n%s\nwant:\n%s", got, want)
 	}
@@ -136,7 +136,7 @@ func TestScenarioStatusTreeReplaysRegression(t *testing.T) {
 	// The segment also carries a trailing "DISPATCH_OK statustree" - that is
 	// the dispatcher's own line (internal/cli), not part of what
 	// HgitStatusTree itself printed, so it is stripped before comparing.
-	want := segment(t, testfix.ExpectedLog(t), "TFULL_STATUSTREE_BEGIN", "TFULL_STATUSTREE_END_MARKER")
+	want := segment(t, testfix.LegacyExpectedLog(t), "TFULL_STATUSTREE_BEGIN", "TFULL_STATUSTREE_END_MARKER")
 	want = strings.TrimSuffix(want, "\nDISPATCH_OK statustree")
 	if normalize(got) != normalize(want+"\n") {
 		t.Fatalf("statustree output:\n got:\n%s\nwant:\n%s", got, want)
@@ -182,7 +182,7 @@ func TestScenarioAttrsStatusReplaysRegression(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := cli.SerialStatus(changes, err)
-	want := segment(t, testfix.ExpectedLog(t), "TFULL_ATTRS_STATUS_BEGIN", "TFULL_ATTRS_STATUS_END_MARKER")
+	want := segment(t, testfix.LegacyExpectedLog(t), "TFULL_ATTRS_STATUS_BEGIN", "TFULL_ATTRS_STATUS_END_MARKER")
 	if normalize(got) != normalize(want+"\n") {
 		t.Fatalf("status output:\n got:\n%s\nwant:\n%s", got, want)
 	}

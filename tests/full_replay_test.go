@@ -366,7 +366,7 @@ func TestFullRegressionReplay(t *testing.T) {
 	mark("TFULL_END")
 
 	got := strings.ReplaceAll(out.String(), home, "C:/Home/")
-	want := testfix.ExpectedLog(t)
+	want := testfix.LegacyExpectedLog(t)
 	if normalize(got) != normalize(want) {
 		t.Fatal(firstDivergence(normalize(got), normalize(want)))
 	}

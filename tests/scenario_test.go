@@ -50,6 +50,22 @@ func openFixture(t *testing.T, name string) *repo.Repo {
 	return r
 }
 
+// openLegacyFixture is openFixture against the preserved pre-1.9 fixture set
+// (ADR 0019): use it wherever a test forces legacy append mode
+// (repo.SetDefaultDedup(false)) to reproduce 1.8.9 byte-for-byte, since the
+// current fixture set no longer has duplicate records to match against.
+func openLegacyFixture(t *testing.T, name string) *repo.Repo {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), name)
+	os.WriteFile(p, testfix.LegacyRead(t, name), 0o644)
+	os.WriteFile(p+".m", testfix.LegacyRead(t, name+".m"), 0o644)
+	r, err := repo.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
 // The fixture is the scenario's final state: `correct` later added a third
 // commit on main, so the mid-scenario TFULL_HISTORY segment (2 commits) is
 // the tail of the final history. The full replay is full_replay_test.go.
@@ -64,7 +80,7 @@ func TestScenarioHistory(t *testing.T) {
 		t.Fatalf("got %d commits, want %d+1", len(got), len(want))
 	}
 	if normalize(strings.Join(got[1:], "\n")) != normalize(strings.Join(want, "\n")) ||
-		!strings.HasPrefix(got[0], "commit ts=512602 msg=correcting_offer") {
+		normalize(got[0]) != "commit ts=T msg=correcting_offer" {
 		t.Fatalf("history mismatch:\n%v\nvs\n%v", got, want)
 	}
 }
@@ -145,7 +161,7 @@ func TestSerialCheckFailTokens(t *testing.T) {
 	r := openFixture(t, "TFullTreeRepo.hgs")
 	r.Arc.Records[0].Data[len(r.Arc.Records[0].Data)-1] ^= 1
 	got := cli.SerialCheck(check.Run(r), nil)
-	if !strings.HasPrefix(got, "CHECK_FAIL objects=15 ok=14 corrupt=1 format_version=4\n") {
+	if !strings.HasPrefix(got, "CHECK_FAIL objects=10 ok=9 corrupt=1 format_version=4\n") {
 		t.Fatalf("got %q", got)
 	}
 }

@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -20,7 +21,7 @@ import (
 // of the logo included.
 func TestScenarioDiscoverabilityReplaysRegression(t *testing.T) {
 	t.Cleanup(repo.SetDefaultDedup(false)) // 1.8.9 parity: ObjectPut appended unconditionally
-	log := testfix.ExpectedLog(t)
+	log := testfix.LegacyExpectedLog(t)
 	const after = "TFULL_HARDEN_END_MARKER\n"
 	i, j := strings.Index(log, after), strings.Index(log, "TFULL_HELP_BEGIN\n")
 	if i < 0 || j < i {
@@ -87,6 +88,7 @@ func TestScenarioViewsOnRegressionRepo(t *testing.T) {
 	r := openFixture(t, "TFullRepo.hgs")
 	lines, _ := r.History()
 	correct := lines[0].Hash
+	correctTS := lines[0].Timestamp
 
 	var got strings.Builder
 	docs := map[string]string{}
@@ -118,7 +120,7 @@ func TestScenarioViewsOnRegressionRepo(t *testing.T) {
 		t.Fatal("fixture and log disagree on the correct target")
 	}
 	for name, want := range map[string]string{
-		"historydoc":        correct.Hex()[:12] + " 512602 correcting_offer\n",
+		"historydoc":        correct.Hex()[:12] + " " + strconv.FormatUint(correctTS, 10) + " correcting_offer\n",
 		"reconciledoc":      "[+] relation: CORRECTS\n      target: " + target + "\n",
 		"reconcileoverview": "[+] relation: CORRECTS\n      target: " + target + "\n",
 		"graph":             "[+] main, 3 commits\n",

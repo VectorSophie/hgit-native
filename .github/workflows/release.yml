@@ -27,13 +27,18 @@ name: Release
 # checkable, since the attestation's own metadata cannot be trusted for
 # this on a dry run.
 #
-# Reproducibility: NOT yet claimed as an established property. -trimpath
-# means the compiled binary itself should not embed the builder's local
-# path, but the archive (zip/tar.gz) wrapping it still carries whatever
-# timestamps/ordering the packaging tool used - a real reproducibility claim
-# needs two independent builds of the same ref to produce byte-identical
-# archive hashes, which has not been verified. See the dry-run report for
-# where this was actually checked.
+# Reproducibility: verified, not assumed. Two fully independent dispatches
+# of the same commit (v1.9.0) produced byte-identical SHA-256 for all four
+# packaged archives, confirmed by downloading and re-hashing the actual
+# artifacts, not by comparing log text. -trimpath keeps the compiled binary
+# itself from embedding the builder's local path; the deterministic
+# packaging steps below (fixed archive entry order, timestamps, owner/group,
+# and - for zip - no extra fields) close the remaining gap, which is the
+# archive wrapper's own metadata, not the binary. This still depends on the
+# Go toolchain version staying pinned above and on the underlying compiler
+# and zlib/gzip behavior remaining stable across GitHub's runner images -
+# an inherent limitation of any reproducible-build claim, not specific to
+# this workflow.
 
 on:
   push:

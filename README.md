@@ -15,7 +15,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" alt="GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/language-Go-00ADD8" alt="written in Go">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Windows, macOS, Linux">
-  <img src="https://img.shields.io/badge/status-in%20development-orange" alt="in development">
+  <a href="https://github.com/VectorSophie/hgit-native/releases/tag/v1.9.0"><img src="https://img.shields.io/github/v/release/VectorSophie/hgit-native?label=release&color=blue" alt="latest release"></a>
+  <img src="https://img.shields.io/badge/status-released-brightgreen" alt="released">
 </p>
 
 <p align="center">
@@ -28,11 +29,16 @@
   <a href="docs/adr/">ADRs</a>
 </p>
 
-> **Status: the port is implemented and its test suite passes; nothing is
-> released yet.** `go build ./cmd/hgit` builds a working binary, and the
-> full command-line regression against real TempleOS output passes end to
-> end. There is no GitHub release and no Homebrew/Chocolatey/apt listing.
-> [`docs/STATUS.md`](docs/STATUS.md) says exactly what exists today.
+> **Status: v1.9.0 is released.** `go build ./cmd/hgit` builds a working
+> binary, and the full command-line regression against real TempleOS output
+> passes end to end. [GitHub Releases](https://github.com/VectorSophie/hgit-native/releases)
+> carries pre-built Windows/macOS/Linux binaries, built and attested by a
+> reproducible CI pipeline (`.github/workflows/release.yml` - two
+> independent builds of the same commit verified to produce byte-identical
+> archives before this claim was made). `choco install hgit-native` is
+> approved on the Chocolatey community feed. No Homebrew formula or apt
+> package yet. [`docs/STATUS.md`](docs/STATUS.md) says exactly what exists
+> today.
 
 ## What this is
 

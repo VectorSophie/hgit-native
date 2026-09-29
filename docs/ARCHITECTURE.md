@@ -8,9 +8,10 @@ written in HolyC for TempleOS. Same commands, same on-disk format, no VM.
 ## What this is, and is not
 
 - **Is:** a standalone VCS. `hgit offer`, `hgit history`, `hgit merge`, ... in
-  a normal terminal. Today it is built from source (`go build ./cmd/hgit`);
-  Chocolatey, Homebrew and apt packages and downloadable binaries are
-  planned, not released.
+  a normal terminal. Built from source (`go build ./cmd/hgit`), a
+  [GitHub release](https://github.com/VectorSophie/hgit-native/releases)
+  with downloadable Windows/macOS/Linux binaries, or `choco install
+  hgit-native`. Homebrew and apt packages are still planned, not released.
 - **Is not:** a drop-in Git replacement. Repos are `.hgs` archives, not Git
   repos. There are no remotes; sharing is `export` / `import`. It cannot open
   Git repos or talk to GitHub. Git interop is a possible later phase, not v1.

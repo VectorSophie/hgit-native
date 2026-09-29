@@ -1,26 +1,40 @@
 # hgit-native status
 
-Snapshot as of 2026-09-24. **The port is fully implemented and tested.**
-Every layer in [`ARCHITECTURE.md`](ARCHITECTURE.md#order) is built,
-`cmd/hgit` is a real command-line tool, the full 302-line command-line
+Snapshot as of 2026-09-29. **The port is fully implemented, tested, and
+released as v1.9.0.** Every layer in [`ARCHITECTURE.md`](ARCHITECTURE.md#order)
+is built, `cmd/hgit` is a real command-line tool, the full command-line
 regression recorded against real TempleOS output passes end to end, and
-TempleOS itself has now read a repository this port wrote.
+TempleOS itself has read a repository this port wrote.
 
 Against ARCHITECTURE.md's "Done means" definition:
 
-- Pillars A and B pass on Linux. The CI workflow that runs them on Linux,
-  macOS and Windows is in place but has no recorded run yet, so macOS and
-  Windows are not yet confirmed.
+- Pillars A and B pass on Linux, macOS and Windows: `ci.yml`'s three-OS
+  matrix (`go build`/`go vet`/`go test ./...`) is green on all three, not
+  just in place unconfirmed.
 - Every command in `help` is covered by A, B or a unit test; the commands
   covered by unit tests only are listed under "Known coverage gap" below.
-- **Pillar C** now passes (see below): a repository built entirely by
+- **Pillar C** passes (see below): a repository built entirely by
   `cmd/hgit` (`init` + two `offer`s) was pushed into a real TempleOS guest
   under QEMU, and `Hgit("check ...")`/`Hgit("history ...")` there produced
   the same `CHECK_OK`/history output this port's own `--serial` mode does
   for the identical repository.
 
-No GitHub release and no Homebrew/Chocolatey/apt listing exist for this
-repository.
+## Release and packaging
+
+[v1.9.0 on GitHub](https://github.com/VectorSophie/hgit-native/releases/tag/v1.9.0)
+carries pre-built Windows (amd64), macOS (amd64 and arm64) and Linux (amd64)
+archives. `.github/workflows/release.yml` builds them: a real per-platform
+smoke test on matching hardware (not just the cross-compile host), a
+Sigstore-backed build-provenance attestation, and deterministic archive
+packaging - verified, not assumed: two fully independent CI runs of the
+same commit produced byte-identical SHA-256 for all four archives before
+that claim was made anywhere in this repo's docs. `workflow_dispatch` is
+dry-run only; only a real `v*` tag push can ever publish a release.
+
+`choco install hgit-native` is approved on the Chocolatey community feed
+(package id `hgit-native`, distinct from `hgit`, already taken by the
+original TempleOS project's own package). No Homebrew formula or `.deb`/apt
+package exists yet.
 
 ## Done
 
@@ -117,8 +131,9 @@ just HolyC source) into a TempleOS guest.
 
 ## Not done
 
-- **Packaging and release**: no `.deb`, no Homebrew formula, no Chocolatey
-  package is built or published for hgit-native. Anyone wanting the tool
-  today builds it with `go build ./cmd/hgit` ([`INSTALL.md`](../INSTALL.md)).
+- **Packaging**: GitHub release and Chocolatey exist (see "Release and
+  packaging" above); no `.deb` and no Homebrew formula yet. Building from
+  source (`go build ./cmd/hgit`, [`INSTALL.md`](../INSTALL.md)) still works
+  the same as always.
 - **A TUI or GUI.** `cmd/hgit` is the only interface; `internal/cli` is a
   plain command-line dispatcher, human-readable or `--serial`.

@@ -1,17 +1,39 @@
 name: Release
 
-# Builds and (once triggered by a real tag push) publishes the per-platform
-# release artifacts on GitHub Actions instead of an ad hoc local machine, so
-# every future release has a reproducible, auditable build log and a signed
-# attestation tying the published binaries to this exact source commit and
-# workflow run - not just a maintainer's word for it.
+# Builds the per-platform release artifacts on GitHub Actions instead of an
+# ad hoc local machine, so every future release has an auditable build log
+# and a signed attestation tying the published binaries to a specific
+# workflow run - not just a maintainer's word for it. See the "attest" job's
+# own comment for exactly what that attestation does and does not prove, and
+# "Known gap" below for what it does NOT prove on a workflow_dispatch dry
+# run specifically.
 #
 # v1.9.0's own artifacts predate this workflow and are NOT rebuilt or
-# replaced by it: this only ever acts on a tag pushed after this workflow
-# exists, or a manual run explicitly asked for below. Re-running this
-# workflow against the v1.9.0 tag (via workflow_dispatch) builds and verifies
-# the same artifacts locally-reproducibly, but does not publish or overwrite
-# anything unless the "publish" input is explicitly set to true.
+# replaced by it. workflow_dispatch is dry-run only: it always builds,
+# smoke-tests and attests, and NEVER creates or touches a GitHub release -
+# there is no input that can make it publish. Only a real `git push --tags`
+# matching v* can ever run the publish job.
+#
+# Known gap (workflow_dispatch dry runs only, not real tag-push releases):
+# actions/attest-build-provenance's own automatic metadata
+# (resolvedDependencies.gitCommit) records the commit that TRIGGERED the
+# run, not the ref the "tag" input redirects checkout to - GitHub's action
+# has no visibility into that override. A real tag-push release has no such
+# gap (the triggering ref IS the tag, nothing is redirected), but a dry run
+# testing an older tag must not be read as "the attestation proves this was
+# built from that tag" - it doesn't. The "Record actual checked-out commit"
+# step below prints and job-summarizes the real `git rev-parse HEAD` for
+# exactly this reason: to make the actually-built commit independently
+# checkable, since the attestation's own metadata cannot be trusted for
+# this on a dry run.
+#
+# Reproducibility: NOT yet claimed as an established property. -trimpath
+# means the compiled binary itself should not embed the builder's local
+# path, but the archive (zip/tar.gz) wrapping it still carries whatever
+# timestamps/ordering the packaging tool used - a real reproducibility claim
+# needs two independent builds of the same ref to produce byte-identical
+# archive hashes, which has not been verified. See the dry-run report for
+# where this was actually checked.
 
 on:
   push:
@@ -20,20 +42,12 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build against (defaults to the ref this is run from)'
+        description: 'Tag to build against, for a dry run (defaults to the ref this is run from). Never publishes - dispatch cannot create or modify a release under any input.'
         required: false
         type: string
-      publish:
-        description: 'Create/update the GitHub release and upload assets (dangerous - only for a real new tag)'
-        required: false
-        type: boolean
-        default: false
 
 # No workflow-level permissions: GITHUB_TOKEN defaults to read-only, and
-# each job below grants itself only what that job actually does, not what
-# the workflow as a whole might ever need - build checks out and compiles,
-# nothing else; attest mints a Sigstore attestation, nothing else; only
-# publish can touch releases.
+# each job below grants itself only what that job actually does.
 permissions: {}
 
 env:
@@ -44,7 +58,36 @@ env:
   GO_VERSION: '1.22.2'
 
 jobs:
+  # Single validation point for the one user-controllable free-text input in
+  # this workflow (workflow_dispatch's "tag"): resolved and checked against
+  # a strict pattern here, through an env var rather than spliced directly
+  # into a shell script, so nothing downstream ever interpolates untrusted
+  # text into a `run:` block. github.ref_name (the real tag on a genuine tag
+  # push) is a git ref name already restricted by git's own naming rules, so
+  # it doesn't need this hardening the way a free-text dispatch input does,
+  # but it goes through the exact same validation regardless.
+  validate:
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Validate tag input
+        id: check
+        env:
+          RAW_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${RAW_TAG:-${{ github.ref_name }}}"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]]; then
+            echo "::error::'$tag' does not look like a valid vX.Y.Z tag name - refusing to use it"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: validate
     strategy:
       matrix:
         include:
@@ -76,26 +119,28 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.validate.outputs.tag }}
+
+      # See "Known gap" at the top of this file: this is the trustworthy
+      # record of what was actually built, independent of what the
+      # attestation's own automatic metadata says on a dispatch dry run.
+      - name: Record actual checked-out commit
+        run: |
+          sha="$(git rev-parse HEAD)"
+          echo "Requested tag: ${{ needs.validate.outputs.tag }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Actually checked out commit: $sha" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Resolve version
-        id: ver
-        run: |
-          ref="${{ inputs.tag || github.ref_name }}"
-          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
-
       # -trimpath removes the local checkout's absolute path from the binary
-      # so the same source+flags+Go version produce the same bytes
-      # regardless of which machine or CI runner built them - a real,
-      # verifiable step toward reproducible builds. -s -w (stripped
-      # symbols) is unchanged from v1.9.0's own build on purpose: the
-      # decision to keep or drop it is explicitly deferred, not part of
-      # this workflow's own scope.
+      # so the compiled binary itself does not embed the builder's own
+      # filesystem layout. -s -w (stripped symbols) is unchanged from
+      # v1.9.0's own build on purpose: dropping it is explicitly deferred,
+      # not in this workflow's scope. Neither flag by itself makes the
+      # packaged archive reproducible - see the file-level comment.
       - name: Build
         env:
           GOOS: ${{ matrix.goos }}
@@ -110,13 +155,13 @@ jobs:
         if: matrix.archive == 'zip'
         run: |
           cd out/pkg
-          zip -q -r "../hgit-native-${{ steps.ver.outputs.version }}-${{ matrix.name }}.zip" .
+          zip -q -r "../hgit-native-${{ needs.validate.outputs.version }}-${{ matrix.name }}.zip" .
 
       - name: Package (tar.gz)
         if: matrix.archive == 'tar.gz'
         run: |
           chmod +x out/pkg/hgit
-          tar czf "out/hgit-native-${{ steps.ver.outputs.version }}-${{ matrix.name }}.tar.gz" -C out/pkg .
+          tar czf "out/hgit-native-${{ needs.validate.outputs.version }}-${{ matrix.name }}.tar.gz" -C out/pkg .
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
@@ -124,6 +169,79 @@ jobs:
           name: hgit-native-${{ matrix.name }}
           path: out/hgit-native-*
           if-no-files-found: error
+
+  # Runs each archive's actual binary on a REAL runner of its own OS/arch -
+  # not the ubuntu-latest cross-compile host that built it. This is
+  # deliberately separate from ci.yml's own full `go test ./...` matrix
+  # (which tests the SOURCE on native windows/macos/ubuntu already): this
+  # job's only job is to prove the specific, packaged, cross-compiled
+  # artifact a user would actually download runs at all on its target
+  # platform, not to re-run the functional test suite.
+  #
+  # macOS runner labels: macos-13 is being retired by GitHub (its own
+  # changelog: "macOS 13 runner image is closing down"), so this uses
+  # macos-15-intel (the current, documented x86_64 label, supported into
+  # 2027) for the amd64 leg, and macos-latest (Apple Silicon by default)
+  # for arm64 - confirmed against GitHub's own current runner-image
+  # documentation, not assumed from older/cached knowledge.
+  smoke-test:
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - name: windows-amd64
+            runs-on: windows-latest
+            bin: hgit.exe
+          - name: mac-amd64
+            runs-on: macos-15-intel
+            bin: hgit
+          - name: mac-arm64
+            runs-on: macos-latest
+            bin: hgit
+          - name: linux-amd64
+            runs-on: ubuntu-latest
+            bin: hgit
+    runs-on: ${{ matrix.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - name: Download this platform's artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: hgit-native-${{ matrix.name }}
+          path: dl
+
+      - name: Extract (zip)
+        if: matrix.name == 'windows-amd64'
+        run: |
+          cd dl
+          $zip = Get-Item hgit-native-*.zip
+          Expand-Archive -Path $zip.FullName -DestinationPath extracted
+        shell: pwsh
+
+      - name: Extract (tar.gz)
+        if: matrix.name != 'windows-amd64'
+        run: |
+          cd dl
+          mkdir extracted
+          tar xzf hgit-native-*.tar.gz -C extracted
+          chmod +x extracted/${{ matrix.bin }}
+
+      - name: Run on real ${{ matrix.name }} hardware
+        if: matrix.name == 'windows-amd64'
+        run: |
+          $exe = ".\dl\extracted\${{ matrix.bin }}"
+          & $exe version
+          if ($LASTEXITCODE -ne 0) { throw "hgit version exited $LASTEXITCODE" }
+          & $exe help
+          if ($LASTEXITCODE -ne 0) { throw "hgit help exited $LASTEXITCODE" }
+        shell: pwsh
+
+      - name: Run on real ${{ matrix.name }} hardware
+        if: matrix.name != 'windows-amd64'
+        run: |
+          ./dl/extracted/${{ matrix.bin }} version
+          ./dl/extracted/${{ matrix.bin }} help
 
   attest:
     needs: build
@@ -146,9 +264,9 @@ jobs:
           cat SHA256SUMS
 
       # Mints a Sigstore-backed SLSA provenance attestation binding these
-      # exact artifact hashes to this exact workflow run, commit and repo -
-      # verifiable later with `gh attestation verify <file> -R
-      # VectorSophie/hgit-native`, without needing a paid code-signing cert.
+      # exact artifact hashes to this workflow run. See the file-level
+      # "Known gap" comment for exactly what its own automatic metadata
+      # does and doesn't prove on a workflow_dispatch dry run.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4
         with:
@@ -161,17 +279,20 @@ jobs:
           path: dist/SHA256SUMS
 
   publish:
-    needs: attest
-    if: github.event_name == 'push' || inputs.publish == true
+    needs: [validate, attest, smoke-test]
+    # workflow_dispatch can NEVER reach this job, under any input - the only
+    # trigger that satisfies this condition is a real tag push. There is no
+    # dispatch input that publishes; removed on purpose (a prior draft had
+    # one, which meant a dry run's only defense against accidentally
+    # publishing was remembering to leave a checkbox unticked).
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       # The exact same files attest already downloaded and hashed - not a
       # fresh independent download, so there is no chance of these being a
-      # different copy. Two separate artifact names (the platform archives,
-      # then the checksums file attest already computed and uploaded)
-      # merged into one directory.
+      # different copy.
       - name: Download built artifacts
         uses: actions/download-artifact@v8
         with:
@@ -179,25 +300,35 @@ jobs:
           pattern: hgit-native-*
           merge-multiple: true
 
+      # The exact checksums file attest already computed and attested -
+      # downloaded, not re-derived, so this can't independently drift from
+      # what was attested.
       - name: Download the already-attested checksums
         uses: actions/download-artifact@v8
         with:
           name: SHA256SUMS
           path: dist
 
+      # Re-verifies the just-downloaded bytes against that exact checksums
+      # file before anything is published - catches any corruption or
+      # substitution between the attest and publish jobs, however unlikely,
+      # rather than trusting the download silently.
+      - name: Verify checksums
+        run: |
+          cd dist
+          sha256sum -c SHA256SUMS --strict
+
       # Deliberately no fallback to `gh release upload --clobber` on a
       # create failure: an existing release (v1.9.0's included) must never
       # be silently overwritten by a re-run of this workflow. If the tag
-      # already has a release, this fails loudly instead - updating an
-      # existing release's assets is a separate, deliberate action, not an
-      # automatic one.
+      # already has a release, this fails loudly instead.
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
         run: |
-          tag="${{ inputs.tag || github.ref_name }}"
-          gh release create "$tag" dist/hgit-native-* dist/SHA256SUMS \
+          gh release create "$TAG" dist/hgit-native-* dist/SHA256SUMS \
             --repo "${{ github.repository }}" \
-            --title "hgit-native $tag" \
+            --title "hgit-native $TAG" \
             --generate-notes \
             --verify-tag

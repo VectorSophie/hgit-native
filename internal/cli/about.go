@@ -8,8 +8,12 @@ import (
 )
 
 // HgitVersion is Hgit.HC's HGIT_VERSION: the TempleOS release this port
-// matches.
-const HgitVersion = "1.8.9"
+// matches, i.e. the version baked into the pinned contract/ fixture, not
+// this package's own release version. Right now both happen to read 1.9.0,
+// but that's a coincidence of timing, not something to rely on going
+// forward - a future hgit-native release could still pin an older or newer
+// contract version than its own release number.
+const HgitVersion = "1.9.0"
 
 // Version is `hgit version`.
 func Version() string { return "HGIT_VERSION " + HgitVersion + "\n" }

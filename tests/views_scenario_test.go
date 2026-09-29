@@ -27,10 +27,13 @@ func TestScenarioDiscoverabilityReplaysRegression(t *testing.T) {
 	if i < 0 || j < i {
 		t.Fatal("markers not found")
 	}
-	if got, want := cli.Version()+cli.Logo(), log[i+len(after):j]; got != want {
+	// normalize()'d for HGIT_VERSION/HELP_VERSION: this legacy fixture set is
+	// frozen at the 1.8.9-era version string forever (ADR 0019) while
+	// cli.HgitVersion moves on, so that one field legitimately differs.
+	if got, want := normalize(cli.Version()+cli.Logo()), normalize(log[i+len(after):j]); got != want {
 		t.Fatalf("version+logo:\ngot:\n%q\nwant:\n%q", got, want)
 	}
-	if got, want := cli.Help(), segment(t, log, "TFULL_HELP_BEGIN", "TFULL_HELP_END_MARKER")+"\n"; got != want {
+	if got, want := normalize(cli.Help()), normalize(segment(t, log, "TFULL_HELP_BEGIN", "TFULL_HELP_END_MARKER")+"\n"); got != want {
 		t.Fatalf("help:\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }

@@ -29,13 +29,21 @@ var (
 	reEnt  = regexp.MustCompile(`\b[0-9a-f]{16}\b`)
 	// reCount is applied only where the fixture outlived the log segment.
 	reCount = regexp.MustCompile(`objects=\d+`)
+	// reVersion masks HGIT_VERSION/HELP_VERSION: it legitimately differs
+	// between the live HgitVersion constant and the preserved pre-1.9
+	// legacy fixture set (ADR 0019), which is frozen forever at the
+	// version string a real 1.8.9-era TempleOS build printed and is never
+	// regenerated - so it will keep reading an older version than
+	// whatever cli.HgitVersion says next, by design.
+	reVersion = regexp.MustCompile(`\b(HGIT_VERSION|HELP_VERSION) \d+\.\d+\.\d+\b`)
 )
 
 // normalize masks values that legitimately differ between runs.
 func normalize(s string) string {
 	s = reTS.ReplaceAllString(s, "ts=T")
 	s = reHash.ReplaceAllString(s, "HASH") // first, so 16-digit ids cannot bite into hashes
-	return reEnt.ReplaceAllString(s, "ENTITY")
+	s = reEnt.ReplaceAllString(s, "ENTITY")
+	return reVersion.ReplaceAllString(s, "$1 V")
 }
 
 func openFixture(t *testing.T, name string) *repo.Repo {

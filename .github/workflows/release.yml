@@ -1,0 +1,203 @@
+name: Release
+
+# Builds and (once triggered by a real tag push) publishes the per-platform
+# release artifacts on GitHub Actions instead of an ad hoc local machine, so
+# every future release has a reproducible, auditable build log and a signed
+# attestation tying the published binaries to this exact source commit and
+# workflow run - not just a maintainer's word for it.
+#
+# v1.9.0's own artifacts predate this workflow and are NOT rebuilt or
+# replaced by it: this only ever acts on a tag pushed after this workflow
+# exists, or a manual run explicitly asked for below. Re-running this
+# workflow against the v1.9.0 tag (via workflow_dispatch) builds and verifies
+# the same artifacts locally-reproducibly, but does not publish or overwrite
+# anything unless the "publish" input is explicitly set to true.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build against (defaults to the ref this is run from)'
+        required: false
+        type: string
+      publish:
+        description: 'Create/update the GitHub release and upload assets (dangerous - only for a real new tag)'
+        required: false
+        type: boolean
+        default: false
+
+# No workflow-level permissions: GITHUB_TOKEN defaults to read-only, and
+# each job below grants itself only what that job actually does, not what
+# the workflow as a whole might ever need - build checks out and compiles,
+# nothing else; attest mints a Sigstore attestation, nothing else; only
+# publish can touch releases.
+permissions: {}
+
+env:
+  # Pinned to an exact patch version, not a floating '1.22' minor: a new Go
+  # patch release should never silently change what a future tagged release
+  # is built with. Bump this deliberately, in its own reviewed commit, the
+  # same discipline the project already applies to fixture/format changes.
+  GO_VERSION: '1.22.2'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            name: windows-amd64
+            ext: .exe
+            archive: zip
+          - goos: darwin
+            goarch: amd64
+            name: mac-amd64
+            ext: ''
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            name: mac-arm64
+            ext: ''
+            archive: tar.gz
+          - goos: linux
+            goarch: amd64
+            name: linux-amd64
+            ext: ''
+            archive: tar.gz
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Resolve version
+        id: ver
+        run: |
+          ref="${{ inputs.tag || github.ref_name }}"
+          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+
+      # -trimpath removes the local checkout's absolute path from the binary
+      # so the same source+flags+Go version produce the same bytes
+      # regardless of which machine or CI runner built them - a real,
+      # verifiable step toward reproducible builds. -s -w (stripped
+      # symbols) is unchanged from v1.9.0's own build on purpose: the
+      # decision to keep or drop it is explicitly deferred, not part of
+      # this workflow's own scope.
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p out/pkg
+          go build -trimpath -ldflags="-s -w" -o "out/pkg/hgit${{ matrix.ext }}" ./cmd/hgit
+          cp LICENSE README.md out/pkg/
+
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        run: |
+          cd out/pkg
+          zip -q -r "../hgit-native-${{ steps.ver.outputs.version }}-${{ matrix.name }}.zip" .
+
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          chmod +x out/pkg/hgit
+          tar czf "out/hgit-native-${{ steps.ver.outputs.version }}-${{ matrix.name }}.tar.gz" -C out/pkg .
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: hgit-native-${{ matrix.name }}
+          path: out/hgit-native-*
+          if-no-files-found: error
+
+  attest:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download all built artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: hgit-native-*
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum hgit-native-* > SHA256SUMS
+          cat SHA256SUMS
+
+      # Mints a Sigstore-backed SLSA provenance attestation binding these
+      # exact artifact hashes to this exact workflow run, commit and repo -
+      # verifiable later with `gh attestation verify <file> -R
+      # VectorSophie/hgit-native`, without needing a paid code-signing cert.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: 'dist/hgit-native-*'
+
+      - name: Upload checksums artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+
+  publish:
+    needs: attest
+    if: github.event_name == 'push' || inputs.publish == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # The exact same files attest already downloaded and hashed - not a
+      # fresh independent download, so there is no chance of these being a
+      # different copy. Two separate artifact names (the platform archives,
+      # then the checksums file attest already computed and uploaded)
+      # merged into one directory.
+      - name: Download built artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: hgit-native-*
+          merge-multiple: true
+
+      - name: Download the already-attested checksums
+        uses: actions/download-artifact@v8
+        with:
+          name: SHA256SUMS
+          path: dist
+
+      # Deliberately no fallback to `gh release upload --clobber` on a
+      # create failure: an existing release (v1.9.0's included) must never
+      # be silently overwritten by a re-run of this workflow. If the tag
+      # already has a release, this fails loudly instead - updating an
+      # existing release's assets is a separate, deliberate action, not an
+      # automatic one.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          gh release create "$tag" dist/hgit-native-* dist/SHA256SUMS \
+            --repo "${{ github.repository }}" \
+            --title "hgit-native $tag" \
+            --generate-notes \
+            --verify-tag

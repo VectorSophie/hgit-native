@@ -146,6 +146,16 @@ jobs:
       # v1.9.0's own build on purpose: dropping it is explicitly deferred,
       # not in this workflow's scope. Neither flag by itself makes the
       # packaged archive reproducible - see the file-level comment.
+      #
+      # -X injects this build's own release version into the binary
+      # (internal/cli.NativeVersion) - this is the actual fix for v1.9.0's
+      # real 'hgit version reports 1.8.9' defect: before this var existed,
+      # a release build had no way to know its own version at all, whatever
+      # HgitVersion (the pinned contract version, a conceptually different
+      # thing) happened to be at the tagged commit. needs.validate.outputs.tag
+      # is already validated against a strict vX.Y.Z pattern before this
+      # workflow ever reaches this step, so this never injects anything
+      # untrusted.
       - name: Build
         env:
           GOOS: ${{ matrix.goos }}
@@ -153,7 +163,8 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           mkdir -p out/pkg
-          go build -trimpath -ldflags="-s -w" -o "out/pkg/hgit${{ matrix.ext }}" ./cmd/hgit
+          go build -trimpath -ldflags="-s -w -X github.com/VectorSophie/hgit-native/internal/cli.NativeVersion=${{ needs.validate.outputs.tag }}" \
+            -o "out/pkg/hgit${{ matrix.ext }}" ./cmd/hgit
           cp LICENSE README.md out/pkg/
 
       # Deterministic: a fixed DOS timestamp (1980-01-01, the format's own
@@ -220,7 +231,7 @@ jobs:
   # for arm64 - confirmed against GitHub's own current runner-image
   # documentation, not assumed from older/cached knowledge.
   smoke-test:
-    needs: build
+    needs: [validate, build]
     strategy:
       matrix:
         include:
@@ -277,6 +288,64 @@ jobs:
         run: |
           ./dl/extracted/${{ matrix.bin }} version
           ./dl/extracted/${{ matrix.bin }} help
+
+      # This exact check is what would have caught v1.9.0's real defect
+      # before publishing: the built binary's own reported version must
+      # equal the tag being released, not merely "the source says so".
+      # Checks the --serial (script-friendly) surface, not the human one.
+      - name: Verify built version matches the tag (Windows)
+        if: matrix.name == 'windows-amd64'
+        run: |
+          $exe = ".\dl\extracted\${{ matrix.bin }}"
+          $out = & $exe --serial nativeversion
+          Write-Output $out
+          $want = "HGIT_NATIVE_VERSION ${{ needs.validate.outputs.tag }}"
+          if ($out -ne $want) { throw "native version mismatch: got '$out', want '$want'" }
+        shell: pwsh
+
+      - name: Verify built version matches the tag
+        if: matrix.name != 'windows-amd64'
+        run: |
+          out="$(./dl/extracted/${{ matrix.bin }} --serial nativeversion)"
+          echo "$out"
+          want="HGIT_NATIVE_VERSION ${{ needs.validate.outputs.tag }}"
+          if [ "$out" != "$want" ]; then
+            echo "::error::native version mismatch: got '$out', want '$want'"
+            exit 1
+          fi
+
+      # Lightweight functional sanity check of the 1.9.x storage/exchange
+      # command surface (ADR 0019/0020) on the actual packaged binary, not
+      # just that it starts up: init, one commit, and a bundle round trip.
+      # Deliberately small and deterministic - not a re-run of the full
+      # test suite (ci.yml already does that from source).
+      - name: "Functional smoke: storage/exchange surface (Windows)"
+        if: matrix.name == 'windows-amd64'
+        run: |
+          $exe = (Resolve-Path ".\dl\extracted\${{ matrix.bin }}").Path
+          $work = Join-Path $env:RUNNER_TEMP "hgit-smoke"
+          New-Item -ItemType Directory -Path $work | Out-Null
+          Push-Location $work
+          "hello" | Out-File -Encoding ascii f.txt
+          & $exe init t.hgs; if ($LASTEXITCODE -ne 0) { throw "init failed" }
+          & $exe offer t.hgs "f.txt" "smoke"; if ($LASTEXITCODE -ne 0) { throw "offer failed" }
+          & $exe bundle create t.hgs out.hgb; if ($LASTEXITCODE -ne 0) { throw "bundle create failed" }
+          & $exe bundle inspect out.hgb; if ($LASTEXITCODE -ne 0) { throw "bundle inspect failed" }
+          Pop-Location
+        shell: pwsh
+
+      - name: "Functional smoke: storage/exchange surface"
+        if: matrix.name != 'windows-amd64'
+        run: |
+          set -e
+          exe="$(pwd)/dl/extracted/${{ matrix.bin }}"
+          work="$RUNNER_TEMP/hgit-smoke"
+          mkdir -p "$work" && cd "$work"
+          echo "hello" > f.txt
+          "$exe" init t.hgs
+          "$exe" offer t.hgs "f.txt" "smoke"
+          "$exe" bundle create t.hgs out.hgb
+          "$exe" bundle inspect out.hgb
 
   attest:
     needs: build

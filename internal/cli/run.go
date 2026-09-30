@@ -123,6 +123,7 @@ func init() {
 		{"have", "<repo_path> <out.hgh>", 2, 2, false, runHave},
 		{"help", "", 0, 0, false, runHelp},
 		{"version", "", 0, 0, false, runVersion},
+		{"nativeversion", "", 0, 0, false, runNativeVersion},
 		{"logo", "", 0, 0, false, runLogo},
 	}
 }

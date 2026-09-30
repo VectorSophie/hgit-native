@@ -693,8 +693,29 @@ func runHelp(c *ctx, _ []string) int {
 	return ExitOK
 }
 
+// runVersion's --serial output is Version() alone, byte-for-byte unchanged
+// from before NativeVersion existed: tests/full_replay_test.go drives this
+// exact command through the full dispatcher in --serial mode and compares
+// the whole transcript against the frozen pre-1.9 legacy fixture
+// (testfix.LegacyExpectedLog), which can never contain a line real TempleOS
+// never printed - so this command's --serial surface must never gain one.
+// Human mode carries no such constraint (never fixture-compared) and shows
+// both versions, clearly labeled and never merged into one line: this
+// build's own release version (NativeVersion) and the TempleOS contract
+// release it has verified parity with (HgitVersion).
 func runVersion(c *ctx, _ []string) int {
-	c.say(Version(), "hgit "+HgitVersion+"\n")
+	c.say(Version(), "hgit-native "+NativeVersion+"\ncontract hgit "+HgitVersion+"\n")
+	return ExitOK
+}
+
+// runNativeVersion is a native-only command (no HolyC precedent, same as
+// `compact`): the one script-friendly place NativeVersion is exposed in
+// --serial mode, exactly what the release workflow's own "does the built
+// binary's version match the git tag" check parses. Kept as a separate
+// command rather than folded into `version`'s own --serial output for
+// exactly the reason in runVersion's comment above.
+func runNativeVersion(c *ctx, _ []string) int {
+	c.say(NativeVersionLine(), "hgit-native "+NativeVersion+"\n")
 	return ExitOK
 }
 

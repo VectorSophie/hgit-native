@@ -262,6 +262,7 @@ func TestEveryCommandRoutes(t *testing.T) {
 	contains(serial(t, ExitOK, "check", filepath.Join(dir, "im.hgs")), "CHECK_OK")
 
 	expect(serial(t, ExitOK, "version"), Version())
+	expect(serial(t, ExitOK, "nativeversion"), NativeVersionLine())
 	expect(serial(t, ExitOK, "logo"), Logo())
 }
 

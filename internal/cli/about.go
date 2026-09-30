@@ -15,8 +15,36 @@ import (
 // contract version than its own release number.
 const HgitVersion = "1.9.0"
 
-// Version is `hgit version`.
+// NativeVersion is this hgit-native BUILD's own release version - a
+// conceptually distinct thing from HgitVersion above (which is not this).
+// It is a var, not a const, specifically so a release build can set it
+// without editing source: `go build -ldflags
+// "-X github.com/VectorSophie/hgit-native/internal/cli.NativeVersion=vX.Y.Z"`
+// (see .github/workflows/release.yml's Build step). Any build that isn't
+// built that way - a plain `go build ./cmd/hgit`, `go install`, a local dev
+// build - keeps this "dev", an honest fallback rather than a stale or
+// guessed number. This is exactly the bug this var exists to prevent: v1.9.0
+// was tagged and released with only HgitVersion in existence, so `hgit
+// version` on that release reports whatever HgitVersion happened to be at
+// the tagged commit (1.8.9, since the later contract-pin/version-string fix
+// landed on main only after the tag) - a real, user-visible defect, not a
+// hypothetical one.
+var NativeVersion = "dev"
+
+// Version is `--serial version`'s first line - unchanged, and it must stay
+// that way: this exact string is compared byte-for-byte against a real
+// TempleOS build's own output in tests/views_scenario_test.go. It reports
+// HgitVersion only, on purpose - NativeVersion is a second, separate line
+// (NativeVersionLine below), never folded into this one, so that parity
+// comparison is completely unaffected by anything to do with this port's
+// own release version.
 func Version() string { return "HGIT_VERSION " + HgitVersion + "\n" }
+
+// NativeVersionLine is `--serial version`'s second line: this port's own
+// release version, script-friendly and exactly what the release workflow's
+// own "does the built binary's version match the git tag" check parses
+// (see release.yml's smoke-test job). Never part of Version() itself.
+func NativeVersionLine() string { return "HGIT_NATIVE_VERSION " + NativeVersion + "\n" }
 
 // Help is HgitHelp, verbatim - including `interactive`, which only exists on
 // TempleOS, and the <dest.DD> arguments of the DolDoc views (see
